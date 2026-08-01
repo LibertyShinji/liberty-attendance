@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>出勤・退勤打刻</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, 'Hiragino Sans', sans-serif;
+    background: #f0f2f5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ヘッダー（時計） */
+  .header {
+    background: #1A237E;
+    color: white;
+    padding: 14px 20px;
+    text-align: center;
+  }
+  .header .date-str { font-size: 13px; opacity: 0.8; }
+  .header .time-str { font-size: 28px; font-weight: bold; letter-spacing: 2px; margin: 2px 0; }
+  .header .day-str  { font-size: 12px; opacity: 0.7; }
+
+  .main { flex: 1; padding: 20px 16px; max-width: 420px; margin: 0 auto; width: 100%; }
+
+  .step { display: none; }
+  .step.active { display: block; }
+
+  /* 打刻ボタン画面 */
+  .welcome {
+    background: white;
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    margin-bottom: 16px;
+    text-align: center;
+  }
+  .welcome .emp-name { font-size: 22px; font-weight: bold; color: #1A237E; }
+  .welcome .today-status { font-size: 13px; color: #666; margin-top: 10px; line-height: 1.6; }
+
+  .status-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: bold;
+    margin-top: 8px;
+  }
+  .status-none  { background: #f5f5f5; color: #888; }
+  .status-in    { background: #E8F5E9; color: #2E7D32; }
+  .status-out   { background: #EDE7F6; color: #4527A0; }
+
+  .action-btns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 4px;
+  }
+  .btn-clock {
+    padding: 28px 0;
+    border: none;
+    border-radius: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    -webkit-appearance: none;
+  }
+  .btn-clock:active { transform: scale(0.95); }
+  .btn-clock:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+  .btn-clock .icon { font-size: 34px; }
+  .btn-clock .label { font-size: 18px; }
+  .btn-in  { background: linear-gradient(135deg, #43A047, #2E7D32); color: white; }
+  .btn-out { background: linear-gradient(135deg, #E53935, #B71C1C); color: white; }
+
+  /* 完了画面 */
+  .result-card {
+    background: white;
+    border-radius: 16px;
+    padding: 32px 24px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    text-align: center;
+  }
+  .result-icon { font-size: 60px; margin-bottom: 16px; }
+  .result-title { font-size: 22px; font-weight: bold; margin-bottom: 10px; }
+  .result-title.in  { color: #2E7D32; }
+  .result-title.out { color: #1565C0; }
+  .result-info { font-size: 15px; color: #555; line-height: 1.8; margin-bottom: 24px; }
+  .result-info strong { color: #333; font-size: 17px; }
+  .btn-back {
+    width: 100%;
+    padding: 14px;
+    background: #1A237E;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+
+  /* 急な休み */
+  .absence-link-wrap { text-align: center; margin-top: 22px; }
+  .absence-link {
+    display: inline-block;
+    color: #8a8a8a;
+    font-size: 12.5px;
+    text-decoration: underline;
+    padding: 8px 4px;
+    cursor: pointer;
+  }
+  .absence-badge {
+    background: #FFF3E0; color: #E65100;
+    border-radius: 10px; padding: 10px 14px;
+    font-size: 13px; line-height: 1.6; margin-top: 14px; text-align: left;
+  }
+  .absence-panel {
+    background: white;
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    margin-top: 16px;
+  }
+  .absence-panel .absence-title { font-size: 15px; font-weight: bold; color: #B71C1C; margin-bottom: 4px; }
+  .absence-panel .absence-desc { font-size: 12.5px; color: #777; margin-bottom: 12px; line-height: 1.6; }
+  .absence-panel textarea {
+    width: 100%; min-height: 70px; padding: 12px; border: 1px solid #ccc; border-radius: 10px;
+    font-size: 15px; font-family: inherit; resize: vertical;
+  }
+  .absence-panel .absence-btns { display: flex; gap: 10px; margin-top: 12px; }
+  .btn-absence-cancel, .btn-absence-send {
+    flex: 1; padding: 13px 0; border: none; border-radius: 10px; font-size: 14px; font-weight: bold; cursor: pointer;
+  }
+  .btn-absence-cancel { background: #eee; color: #555; }
+  .btn-absence-send   { background: #B71C1C; color: white; }
+  .btn-absence-send:disabled { opacity: 0.45; }
+
+  /* お知らせ（役員/未登録） */
+  .notice-card {
+    background: white;
+    border-radius: 16px;
+    padding: 36px 24px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    text-align: center;
+  }
+  .notice-icon { font-size: 50px; margin-bottom: 14px; }
+  .notice-title { font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px; }
+  .notice-text { font-size: 14px; color: #666; line-height: 1.7; }
+
+  /* ローディング */
+  .loading-overlay {
+    display: flex;
+    position: fixed; inset: 0;
+    background: rgba(255,255,255,0.9);
+    justify-content: center;
+    align-items: center;
+    z-index: 999;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .loading-overlay.hide { display: none; }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 4px solid #e0e0e0;
+    border-top-color: #1A237E;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="date-str" id="headerDate"></div>
+  <div class="time-str" id="headerTime">--:--</div>
+  <div class="day-str" id="headerDay"></div>
+</div>
+
+<div class="main">
+
+  <!-- 打刻画面 -->
+  <div class="step" id="stepAction">
+    <div class="welcome">
+      <div class="emp-name" id="empName"></div>
+      <div class="today-status" id="todayStatus"></div>
+    </div>
+    <div class="action-btns">
+      <button class="btn-clock btn-in"  id="btnIn"  onclick="doAction('in')">
+        <span class="icon">🟢</span>
+        <span class="label">出勤</span>
+      </button>
+      <button class="btn-clock btn-out" id="btnOut" onclick="doAction('out')">
+        <span class="icon">🔴</span>
+        <span class="label">退勤</span>
+      </button>
+    </div>
+
+    <div id="absenceBadge" style="display:none;"></div>
+
+    <div class="absence-link-wrap" id="absenceLinkWrap" style="display:none;">
+      <span class="absence-link" onclick="openAbsencePanel()">🚨 今日は急に休みます</span>
+    </div>
+
+    <div class="absence-panel" id="absencePanel" style="display:none;">
+      <div class="absence-title">急なお休み連絡</div>
+      <div class="absence-desc">送信すると本日は欠勤として登録され、本日出勤予定のスタッフと役員にLINEで通知されます。取り消しはできません。</div>
+      <textarea id="absenceReason" placeholder="理由を入力してください（例：体調不良、家庭の事情など）"></textarea>
+      <div class="absence-btns">
+        <button class="btn-absence-cancel" onclick="closeAbsencePanel()">キャンセル</button>
+        <button class="btn-absence-send" id="absenceSendBtn" onclick="sendAbsence()">送信する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 完了画面 -->
+  <div class="step" id="stepResult">
+    <div class="result-card">
+      <div class="result-icon" id="resultIcon"></div>
+      <div class="result-title" id="resultTitle"></div>
+      <div class="result-info"  id="resultInfo"></div>
+      <button class="btn-back" onclick="backToAction()">戻る</button>
+    </div>
+  </div>
+
+  <!-- 初回登録（新人の本人スマホ紐付け） -->
+  <div class="step" id="stepRegister">
+    <div class="notice-card">
+      <div class="notice-icon">📝</div>
+      <div class="notice-title">初回登録</div>
+      <div class="notice-text" style="margin-bottom:16px;">
+        はじめての打刻です。<br>あなたのお名前を選んで登録してください。
+      </div>
+      <select id="regSelect" style="width:100%;padding:14px;border:1px solid #ccc;border-radius:10px;font-size:16px;margin-bottom:14px;"></select>
+      <button class="btn-back" style="background:#2E7D32;" id="regBtn" onclick="doRegister()">この名前で登録する</button>
+      <div id="regMsg" style="font-size:13px;color:#c00;margin-top:12px;min-height:18px;"></div>
+    </div>
+  </div>
+
+  <!-- お知らせ（役員・未登録） -->
+  <div class="step" id="stepNotice">
+    <div class="notice-card">
+      <div class="notice-icon" id="noticeIcon">ℹ️</div>
+      <div class="notice-title" id="noticeTitle"></div>
+      <div class="notice-text"  id="noticeText"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ローディング -->
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <div style="font-size:14px;color:#555;">読み込み中...</div>
+</div>
+
+<script>
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbxiSxFn4_sJ4vYphaC0cyt77fhf400fwxVNLY56NtkOLBMtbwft6ERj4oaLERGBn49b/exec';
+const LIFF_ID = '2010927150-jRsKoCGX';
+const WEEKDAY = ['日','月','火','水','木','金','土'];
+let userId = null;
+
+// ===== 時計 =====
+function updateClock() {
+  const now = new Date();
+  const hh  = String(now.getHours()).padStart(2,'0');
+  const mm  = String(now.getMinutes()).padStart(2,'0');
+  document.getElementById('headerTime').textContent = hh + ':' + mm;
+  document.getElementById('headerDate').textContent =
+    now.getFullYear() + '年' + (now.getMonth()+1) + '月' + now.getDate() + '日';
+  document.getElementById('headerDay').textContent  = '（' + WEEKDAY[now.getDay()] + '曜日）';
+}
+updateClock();
+setInterval(updateClock, 10000);
+
+// ===== API =====
+async function api(payload) {
+  const res = await fetch(GAS_URL, {
+    method: 'POST', headers: {'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify(payload)
+  });
+  return res.json();
+}
+
+// ===== 起動：本人判別→状況取得 =====
+async function loadStatus() {
+  showLoading(true);
+  try {
+    const data = await api({ type: 'get_today_status', userId });
+    if (data.notRegistered) { await showRegisterStep(); return; }
+    if (!data.success) { showNotice('⚠️', '打刻できません', data.message); return; }
+    if (data.noPunch)  { showNotice('👔', data.name + ' さん', '役員のため打刻対象外です。\n管理者メニューをご利用ください。'); return; }
+    showActionStep(data);
+  } catch(e) {
+    showNotice('⚠️', '通信エラー', 'もう一度メニューから開き直してください。');
+  } finally {
+    showLoading(false);
+  }
+}
+
+function showActionStep(data) {
+  document.getElementById('empName').textContent = data.name + ' さん';
+
+  let badge = '', cls = 'status-none', sub = '';
+  if (data.status === 'clocked_out') {
+    badge = '退勤済み'; cls = 'status-out';
+    sub = '出勤 ' + data.clockIn + '　退勤 ' + data.clockOut +
+          (data.hours != null ? '　勤務 ' + data.hours + 'h' : '');
+  } else if (data.status === 'clocked_in') {
+    badge = '出勤中'; cls = 'status-in';
+    sub = '出勤 ' + data.clockIn;
+  } else {
+    badge = '本日まだ打刻していません';
+  }
+  document.getElementById('todayStatus').innerHTML =
+    `<span class="status-badge ${cls}">${badge}</span>` +
+    (sub ? `<br><small style="color:#888">${sub}</small>` : '');
+
+  document.getElementById('btnIn').disabled  = (data.status !== 'not_clocked_in');
+  document.getElementById('btnOut').disabled = (data.status !== 'clocked_in');
+
+  // 急な休み：本日まだ出勤打刻していない場合のみリンクを出す。登録済みならバッジ表示に切替。
+  const badgeEl = document.getElementById('absenceBadge');
+  const linkWrap = document.getElementById('absenceLinkWrap');
+  closeAbsencePanel();
+  if (data.absenceReason) {
+    badgeEl.style.display = 'block';
+    badgeEl.className = 'absence-badge';
+    badgeEl.innerHTML = '🚨 本日はお休み登録済みです<br>理由：' + escapeHtml(data.absenceReason);
+    linkWrap.style.display = 'none';
+  } else {
+    badgeEl.style.display = 'none';
+    linkWrap.style.display = (data.status === 'not_clocked_in') ? 'block' : 'none';
+  }
+
+  showStep('stepAction');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ===== 急な休み =====
+function openAbsencePanel() {
+  document.getElementById('absenceReason').value = '';
+  document.getElementById('absencePanel').style.display = 'block';
+  document.getElementById('absenceLinkWrap').style.display = 'none';
+}
+function closeAbsencePanel() {
+  document.getElementById('absencePanel').style.display = 'none';
+}
+
+async function sendAbsence() {
+  const reason = document.getElementById('absenceReason').value.trim();
+  if (!reason) { alert('理由を入力してください'); return; }
+  if (!confirm('本日を休みにします。よろしいですか？\n理由：' + reason + '\n\n出勤予定のスタッフと役員にLINEで通知されます。')) return;
+
+  const btn = document.getElementById('absenceSendBtn');
+  btn.disabled = true;
+  showLoading(true);
+  try {
+    const data = await api({ type: 'submit_sudden_absence', userId, reason });
+    if (!data.success) { alert(data.message || '送信に失敗しました'); return; }
+    await loadStatus();
+  } catch (e) {
+    alert('通信エラーが発生しました。再度お試しください。');
+  } finally {
+    btn.disabled = false;
+    showLoading(false);
+  }
+}
+
+// ===== 位置情報取得（記録のみ・拒否されても打刻は通す） =====
+function getLoc() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    );
+  });
+}
+
+// ===== 打刻実行 =====
+async function doAction(type) {
+  showLoading(true);
+  try {
+    const loc = await getLoc();
+    const apiType = type === 'in' ? 'liff_clock_in' : 'liff_clock_out';
+    const data = await api({ type: apiType, userId, loc });
+    if (data.alreadyDone) { alert(data.message); await loadStatus(); return; }
+    if (!data.success)    { alert(data.message); showLoading(false); return; }
+    showResult(type, data);
+  } catch(e) {
+    alert('通信エラーが発生しました。再度お試しください。');
+  } finally {
+    showLoading(false);
+  }
+}
+
+function showResult(type, data) {
+  if (type === 'in') {
+    document.getElementById('resultIcon').textContent  = '✅';
+    document.getElementById('resultTitle').className   = 'result-title in';
+    document.getElementById('resultTitle').textContent = '出勤しました';
+    document.getElementById('resultInfo').innerHTML    =
+      `<strong>${data.name}</strong><br>${data.date}　<strong>${data.time}</strong>`;
+  } else {
+    document.getElementById('resultIcon').textContent  = '🏁';
+    document.getElementById('resultTitle').className   = 'result-title out';
+    document.getElementById('resultTitle').textContent = 'お疲れ様でした';
+    document.getElementById('resultInfo').innerHTML    =
+      `<strong>${data.name}</strong><br>` +
+      `出勤 ${data.clockIn}　退勤 <strong>${data.clockOut}</strong><br>` +
+      `勤務時間：<strong>${data.hours} 時間</strong>`;
+  }
+  showStep('stepResult');
+}
+
+// ===== 初回登録（本人スマホ紐付け） =====
+async function showRegisterStep() {
+  const d = await api({ type: 'get_unbound_employees' });
+  const sel = document.getElementById('regSelect');
+  const btn = document.getElementById('regBtn');
+  const list = (d && d.success) ? d.employees : [];
+  if (!list.length) {
+    showNotice('ℹ️', '登録待ちがありません',
+      'あなたの登録枠がまだありません。\n管理者に「社員の追加」を依頼してください。');
+    return;
+  }
+  sel.innerHTML = '<option value="">― 名前を選んでください ―</option>' +
+    list.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+  btn.disabled = false;
+  document.getElementById('regMsg').textContent = '';
+  showStep('stepRegister');
+}
+
+async function doRegister() {
+  const empId = document.getElementById('regSelect').value;
+  const name  = document.getElementById('regSelect').selectedOptions[0].textContent;
+  const msg   = document.getElementById('regMsg');
+  if (!empId) { msg.textContent = '名前を選んでください'; return; }
+  if (!confirm('あなたは「' + name + '」さんですか？\nこの登録はあなたのスマホと結びつきます。')) return;
+  showLoading(true);
+  try {
+    const d = await api({ type: 'bind_my_line_id', userId, employeeId: empId });
+    if (!d.success) { msg.textContent = d.message || '登録に失敗しました'; showLoading(false); return; }
+    await loadStatus();   // 登録完了 → 通常の打刻画面へ
+  } catch (e) {
+    msg.textContent = '通信エラーが発生しました';
+    showLoading(false);
+  }
+}
+
+function showNotice(icon, title, text) {
+  document.getElementById('noticeIcon').textContent = icon;
+  document.getElementById('noticeTitle').textContent = title;
+  document.getElementById('noticeText').innerHTML = (text || '').replace(/\n/g, '<br>');
+  showStep('stepNotice');
+}
+
+function backToAction() { loadStatus(); }
+
+function showStep(id) {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function showLoading(show) {
+  document.getElementById('loading').classList.toggle('hide', !show);
+}
+
+// ===== LIFF初期化 → 本人のUserID取得 =====
+(async () => {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+    const profile = await liff.getProfile();
+    userId = profile.userId;
+    await loadStatus();
+  } catch(e) {
+    console.error('LIFF init error:', e);
+    showNotice('⚠️', '初期化エラー', 'LINEアプリ内から開いてください。\n' + (e && e.message ? e.message : ''));
+    showLoading(false);
+  }
+})();
+</script>
+</body>
+</html>

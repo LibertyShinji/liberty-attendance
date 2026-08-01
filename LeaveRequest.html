@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>有給申請</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Hiragino Sans', sans-serif;
+    background: #f5f5f5;
+    min-height: 100vh;
+  }
+  .header {
+    background: #2196F3;
+    color: white;
+    padding: 16px 20px;
+    font-size: 18px;
+    font-weight: bold;
+    text-align: center;
+  }
+  .container { padding: 20px; max-width: 480px; margin: 0 auto; }
+  .card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  .card h2 {
+    font-size: 15px;
+    color: #555;
+    margin-bottom: 12px;
+    border-bottom: 2px solid #e3f2fd;
+    padding-bottom: 8px;
+  }
+  .balance-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    text-align: center;
+  }
+  .balance-item { padding: 10px; }
+  .balance-item .num {
+    font-size: 28px;
+    font-weight: bold;
+    color: #2196F3;
+  }
+  .balance-item .label { font-size: 12px; color: #888; margin-top: 4px; }
+  .balance-remaining .num { color: #4CAF50; }
+
+  label {
+    display: block;
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 6px;
+    margin-top: 14px;
+  }
+  input, select, textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1.5px solid #ddd;
+    border-radius: 8px;
+    font-size: 15px;
+    font-family: inherit;
+    transition: border-color 0.2s;
+    background: #fff;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: #2196F3;
+  }
+  textarea { resize: vertical; min-height: 80px; }
+  .pin-row { display: flex; gap: 8px; align-items: flex-end; }
+  .pin-row input { flex: 1; }
+  .btn-verify {
+    padding: 12px 16px;
+    background: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-verify:disabled { background: #bbb; cursor: not-allowed; }
+  .user-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #e3f2fd;
+    color: #1565C0;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: bold;
+    margin-top: 8px;
+  }
+  .date-hint { font-size: 12px; color: #aaa; margin-top: 4px; }
+  .days-preview {
+    background: #f3f9ff;
+    border: 1.5px solid #2196F3;
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+    margin-top: 14px;
+    font-size: 14px;
+    color: #1565C0;
+  }
+  .btn-submit {
+    width: 100%;
+    padding: 16px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 17px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background 0.2s;
+  }
+  .btn-submit:hover { background: #388E3C; }
+  .btn-submit:disabled { background: #bbb; cursor: not-allowed; }
+  .msg {
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-top: 12px;
+    display: none;
+  }
+  .msg.success { background: #e8f5e9; color: #2E7D32; border: 1px solid #A5D6A7; }
+  .msg.error   { background: #ffebee; color: #C62828; border: 1px solid #EF9A9A; }
+  .msg.info    { background: #e3f2fd; color: #1565C0; border: 1px solid #90CAF9; }
+  .section-hidden { display: none; }
+  .spinner {
+    display: inline-block;
+    width: 18px; height: 18px;
+    border: 2px solid rgba(255,255,255,0.5);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="header">📝 有給申請</div>
+<div class="container">
+
+  <!-- 起動メッセージ -->
+  <div class="card" id="bootSection">
+    <div class="msg info" id="bootMsg" style="display:block;">読み込み中...</div>
+  </div>
+
+  <!-- 有給残日数 -->
+  <div class="card section-hidden" id="balanceSection">
+    <h2>有給残日数（<span id="balYear"></span>年度）</h2>
+    <div id="userBadge"></div>
+    <div class="balance-grid" style="margin-top:12px;">
+      <div class="balance-item">
+        <div class="num" id="balTotal">—</div>
+        <div class="label">付与</div>
+      </div>
+      <div class="balance-item">
+        <div class="num" id="balUsed">—</div>
+        <div class="label">使用済み</div>
+      </div>
+      <div class="balance-item balance-remaining">
+        <div class="num" id="balRemaining">—</div>
+        <div class="label">残り</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 申請フォーム -->
+  <div class="card section-hidden" id="formSection">
+    <h2>申請内容</h2>
+    <label>種別</label>
+    <select id="halfType" onchange="onHalfChange()">
+      <option value="全休">全休（1日）</option>
+      <option value="午前">午前半休（10:00〜14:00／0.5日）</option>
+      <option value="午後">午後半休（14:00〜18:00／0.5日）</option>
+    </select>
+    <label id="startLabel">開始日</label>
+    <input type="date" id="startDate" onchange="calcDays()">
+    <div id="endWrap">
+      <label>終了日</label>
+      <input type="date" id="endDate" onchange="calcDays()">
+    </div>
+    <div class="days-preview section-hidden" id="daysPreview"></div>
+    <label>理由（任意）</label>
+    <textarea id="reason" placeholder="例：私用のため"></textarea>
+    <div class="msg" id="formMsg"></div>
+    <button class="btn-submit" id="btnSubmit" onclick="submitForm()" disabled>申請する</button>
+    <div style="font-size:12px;color:#888;margin-top:12px;text-align:center;">
+      無給のお休み（公休）は <a href="https://liff.line.me/2010927150-ZVsHVBWW" style="color:#6A1B9A;font-weight:bold;">休み希望</a> から
+    </div>
+  </div>
+
+</div>
+
+<script>
+const GAS_URL = '<?= ScriptApp.getService().getUrl() ?>';
+const LIFF_ID = '<?= PropertiesService.getScriptProperties().getProperty("LIFF_LEAVE_ID") ?>';
+let userId = null;
+let remainingDays = 0;
+
+async function loadBalance() {
+  try {
+    const res = await fetch(GAS_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body:    JSON.stringify({ type: 'get_my_balance', userId })
+    });
+    const data = await res.json();
+    if (!data.success) {
+      showMsg('bootMsg', 'error', data.message);
+      return;
+    }
+
+    remainingDays = data.remaining;
+
+    document.getElementById('balYear').textContent     = data.year;
+    document.getElementById('balTotal').textContent    = data.total;
+    document.getElementById('balUsed').textContent     = data.used;
+    document.getElementById('balRemaining').textContent = data.remaining;
+    document.getElementById('userBadge').innerHTML =
+      '<div class="user-badge">✓ ' + data.name + '</div>';
+
+    document.getElementById('bootSection').style.display = 'none';
+    show('balanceSection');
+
+    // 有給の付与が無い人（有給非対象）は申請フォームの代わりに休み希望へ誘導
+    if ((Number(data.total) || 0) === 0 && (Number(data.remaining) || 0) === 0) {
+      const fm = document.getElementById('formSection');
+      fm.classList.remove('section-hidden');
+      fm.innerHTML = '<h2>申請内容</h2>' +
+        '<div class="msg info" style="display:block;">有給の付与がないため、こちらからは申請できません。<br>お休みは「休み希望」から申請してください。</div>' +
+        '<button class="btn-submit" style="background:#6A1B9A;" onclick="location.href=\'https://liff.line.me/2010927150-ZVsHVBWW\'">🗓 休み希望をひらく</button>';
+      return;
+    }
+
+    show('formSection');
+
+    // 今日以降の日付をデフォルト
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('startDate').min = today;
+    document.getElementById('endDate').min   = today;
+    document.getElementById('startDate').value = today;
+    document.getElementById('endDate').value   = today;
+    calcDays();
+  } catch (e) {
+    showMsg('bootMsg', 'error', '通信エラーが発生しました。開き直してください。');
+  }
+}
+
+function isHalf() {
+  const v = document.getElementById('halfType').value;
+  return v === '午前' || v === '午後';
+}
+
+// 種別変更：半休なら終了日を隠して単日に
+function onHalfChange() {
+  const half = isHalf();
+  document.getElementById('endWrap').style.display = half ? 'none' : 'block';
+  document.getElementById('startLabel').textContent = half ? '日付' : '開始日';
+  if (half) document.getElementById('endDate').value = document.getElementById('startDate').value;
+  calcDays();
+}
+
+function calcDays() {
+  const s = document.getElementById('startDate').value;
+  const half = isHalf();
+  const e = half ? s : document.getElementById('endDate').value;
+  if (!s || !e) return;
+
+  const start = new Date(s);
+  const end   = new Date(e);
+  if (!half && end < start) {
+    showMsg('formMsg', 'error', '終了日は開始日以降を選択してください');
+    document.getElementById('btnSubmit').disabled = true;
+    document.getElementById('daysPreview').classList.add('section-hidden');
+    return;
+  }
+
+  const days    = half ? 0.5 : (Math.round((end - start) / 86400000) + 1);
+  const preview = document.getElementById('daysPreview');
+  const halfLabel = half ? '（' + document.getElementById('halfType').value + '半休）' : '間';
+  preview.textContent = days + '日' + halfLabel + '（残日数：' + remainingDays + '日）';
+  preview.classList.remove('section-hidden');
+
+  const msg = document.getElementById('formMsg');
+  msg.style.display = 'none';
+
+  if (days > remainingDays) {
+    showMsg('formMsg', 'error', '有給残日数（' + remainingDays + '日）を超えています');
+    document.getElementById('btnSubmit').disabled = true;
+  } else {
+    document.getElementById('btnSubmit').disabled = false;
+  }
+}
+
+async function submitForm() {
+  const halfType  = document.getElementById('halfType').value;
+  const half      = isHalf();
+  const startDate = document.getElementById('startDate').value;
+  const endDate   = half ? startDate : document.getElementById('endDate').value;
+  const reason    = document.getElementById('reason').value.trim();
+
+  if (!startDate || (!half && !endDate)) {
+    showMsg('formMsg', 'error', half ? '日付を入力してください' : '開始日と終了日を入力してください');
+    return;
+  }
+
+  setLoading('btnSubmit', true, '送信中...');
+  try {
+    const res = await fetch(GAS_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body:    JSON.stringify({
+        type: 'submit_leave',
+        data: { userId, startDate, endDate, reason, halfType }
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showMsg('formMsg', 'success', data.message);
+      document.getElementById('btnSubmit').disabled = true;
+      // LIFFを閉じる（LINE内の場合）
+      setTimeout(() => { try { liff.closeWindow(); } catch(e) {} }, 2000);
+    } else {
+      showMsg('formMsg', 'error', data.message);
+    }
+  } catch (e) {
+    showMsg('formMsg', 'error', '通信エラーが発生しました。再度お試しください。');
+  } finally {
+    setLoading('btnSubmit', false, '申請する');
+  }
+}
+
+function showMsg(id, type, text) {
+  const el = document.getElementById(id);
+  el.className = 'msg ' + type;
+  el.textContent = text;
+  el.style.display = 'block';
+}
+
+function show(id) {
+  document.getElementById(id).classList.remove('section-hidden');
+}
+
+function setLoading(btnId, loading, text) {
+  const btn = document.getElementById(btnId);
+  btn.disabled = loading;
+  btn.innerHTML = loading ? '<span class="spinner"></span>' + text : text;
+}
+
+// LIFF初期化 → 本人のUserID取得 → 残日数読み込み
+(async () => {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+    const profile = await liff.getProfile();
+    userId = profile.userId;
+    await loadBalance();
+  } catch (e) {
+    console.error('LIFF init error:', e);
+    showMsg('bootMsg', 'error', 'LINEアプリ内から開いてください。');
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>出勤カレンダー</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Hiragino Sans', sans-serif;
+    background: #f0f2f5;
+    min-height: 100vh;
+  }
+
+  /* ヘッダー */
+  .header {
+    background: #1565C0;
+    color: white;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header h1 { font-size: 17px; }
+
+  /* 月ナビゲーション */
+  .month-nav {
+    background: white;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  .month-nav .month-label { font-size: 18px; font-weight: bold; color: #1565C0; }
+  .nav-btn {
+    background: none;
+    border: none;
+    font-size: 22px;
+    cursor: pointer;
+    padding: 4px 10px;
+    color: #1565C0;
+    border-radius: 6px;
+  }
+  .nav-btn:hover { background: #e3f2fd; }
+  .today-btn {
+    font-size: 13px;
+    padding: 6px 12px;
+    background: #e3f2fd;
+    color: #1565C0;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+  }
+
+  /* 凡例 */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 12px;
+    background: white;
+    border-bottom: 1px solid #eee;
+    font-size: 11px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 3px; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-scheduled      { background: #64B5F6; }
+  .dot-attended       { background: #66BB6A; }
+  .dot-clocked-in     { background: #A5D6A7; }
+  .dot-absent         { background: #EF5350; }
+  .dot-holiday        { background: #E0E0E0; }
+  .dot-koukyuu        { background: #B0BEC5; }
+  .dot-leave          { background: #26A69A; }
+  .dot-off            { background: #EEEEEE; }
+
+  /* カレンダー */
+  .calendar-wrap { padding: 12px; }
+  .week-header {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    margin-bottom: 3px;
+  }
+  .week-header div {
+    text-align: center;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 4px 0;
+    color: #888;
+  }
+  .week-header div:first-child { color: #EF5350; }
+  .week-header div:last-child  { color: #1565C0; }
+
+  .calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+  }
+  .day-cell {
+    min-height: 64px;
+    background: white;
+    border-radius: 8px;
+    padding: 6px 4px 4px;
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.1s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .day-cell:active { transform: scale(0.94); }
+  .day-cell.empty { background: transparent; cursor: default; }
+
+  .day-num {
+    font-size: 14px;
+    font-weight: bold;
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .day-cell.is-today .day-num {
+    background: #1565C0;
+    color: white;
+  }
+  .day-cell.is-sunday  .day-num { color: #EF5350; }
+  .day-cell.is-saturday .day-num { color: #1565C0; }
+
+  /* ステータス別の背景色 */
+  .day-cell.status-scheduled      { background: #E3F2FD; }
+  .day-cell.status-attended       { background: #E8F5E9; }
+  .day-cell.status-clocked_in     { background: #F1F8E9; }
+  .day-cell.status-absent         { background: #FFEBEE; }
+  .day-cell.status-holiday        { background: #FAFAFA; }
+  .day-cell.status-koukyuu        { background: #ECEFF1; }
+  .day-cell.status-koukyuu_half   { background: #F5F5F5; border: 1px dashed #B0BEC5; }
+  .day-cell.status-leave          { background: #E0F2F1; }
+  .day-cell.status-leave_half     { background: #F1F8F7; border: 1px dashed #4DB6AC; }
+  .day-cell.status-koukyuu_request { background: #EDE7F6; border: 1px dashed #9575CD; }
+  .day-cell.status-koukyuu_request_half { background: #F3EEFB; border: 1px dashed #B39DDB; }
+  .day-cell.status-off            { background: #FAFAFA; }
+
+  .day-time {
+    font-size: 10px;
+    color: #555;
+    margin-top: 2px;
+    text-align: center;
+    line-height: 1.3;
+  }
+
+  /* サマリーバー */
+  .summary-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding: 10px 12px;
+    background: white;
+    border-top: 1px solid #eee;
+  }
+  .summary-item { text-align: center; }
+  .summary-item .num { font-size: 20px; font-weight: bold; }
+  .summary-item .label { font-size: 10px; color: #888; }
+  .num-attended { color: #43A047; }
+  .num-absent   { color: #E53935; }
+  .num-holiday  { color: #90A4AE; }
+
+  /* ボトムシート（日付詳細） */
+  .overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 100;
+  }
+  .overlay.show { display: block; }
+  .bottom-sheet {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: white;
+    border-radius: 20px 20px 0 0;
+    padding: 20px;
+    max-height: 75vh;
+    overflow-y: auto;
+    transform: translateY(100%);
+    transition: transform 0.3s ease;
+    z-index: 101;
+  }
+  .bottom-sheet.show { transform: translateY(0); }
+  .sheet-handle {
+    width: 40px; height: 4px;
+    background: #ddd; border-radius: 2px;
+    margin: 0 auto 16px;
+  }
+  .sheet-date { font-size: 18px; font-weight: bold; margin-bottom: 16px; }
+  .sheet-section { margin-bottom: 14px; }
+  .sheet-section-title {
+    font-size: 12px; color: #888; font-weight: bold;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .info-row {
+    display: flex; justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #f5f5f5;
+    font-size: 14px;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-row .val { font-weight: bold; color: #1565C0; }
+
+  .status-chip {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 10px;
+  }
+  .chip-scheduled      { background: #E3F2FD; color: #1565C0; }
+  .chip-attended       { background: #E8F5E9; color: #2E7D32; }
+  .chip-absent         { background: #FFEBEE; color: #B71C1C; }
+  .chip-holiday        { background: #f5f5f5; color: #888; }
+  .chip-koukyuu        { background: #ECEFF1; color: #546E7A; }
+  .chip-leave          { background: #E0F2F1; color: #00695C; }
+  .chip-leave-half     { background: #F1F8F7; color: #00796B; }
+  .chip-koukyuu-half   { background: #F5F5F5; color: #546E7A; }
+  .chip-koukyuu-request{ background: #EDE7F6; color: #6A1B9A; }
+  .chip-koukyuu-request_half{ background: #F3EEFB; color: #6A1B9A; }
+
+  .btn-change {
+    width: 100%;
+    padding: 14px;
+    background: #1565C0;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .btn-close {
+    width: 100%;
+    padding: 12px;
+    background: #f5f5f5;
+    color: #555;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+
+
+  /* PIN認証 */
+  .pin-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 999;
+  }
+  .pin-box {
+    background: white;
+    border-radius: 16px;
+    padding: 28px 24px;
+    width: 300px;
+    text-align: center;
+  }
+  .pin-box h2 { font-size: 17px; margin-bottom: 16px; }
+  .pin-box input {
+    width: 100%;
+    padding: 14px;
+    border: 2px solid #ddd;
+    border-radius: 10px;
+    font-size: 20px;
+    text-align: center;
+    letter-spacing: 4px;
+    margin-bottom: 12px;
+  }
+  .pin-box input:focus { outline: none; border-color: #1565C0; }
+  .btn-login {
+    width: 100%;
+    padding: 14px;
+    background: #1565C0;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  .pin-error { color: #F44336; font-size: 13px; margin-top: 8px; min-height: 20px; }
+
+  /* 給与カード（パート本人のみ） */
+  .pay-card {
+    background: #fff;
+    margin: 12px 12px 0;
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .pay-card .pc-title { font-size: 13px; color: #666; font-weight: bold; margin-bottom: 10px; }
+  .pay-card .pc-title b { color: #1565C0; }
+  .pc-stats { display: flex; gap: 10px; }
+  .pc-stat { flex: 1; background: #f5f7fa; border-radius: 10px; padding: 10px; text-align: center; }
+  .pc-stat .pc-label { font-size: 11px; color: #888; }
+  .pc-stat .pc-val { font-size: 20px; font-weight: bold; }
+  .pc-stat.now .pc-val { color: #2E7D32; }
+  .pc-stat.est .pc-val { color: #1565C0; }
+  .pc-sub { font-size: 11px; color: #999; margin-top: 8px; line-height: 1.6; }
+  .pc-net { display: flex; gap: 10px; margin-top: 8px; }
+  .pc-net div { flex: 1; text-align: center; font-size: 12px; color: #555; }
+  .pc-goal { margin-top: 10px; background: #FFF8E1; border-radius: 10px; padding: 10px 12px; }
+  .pc-goal-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #5D4037; margin-bottom: 6px; }
+  .pc-goal-head .edit { color: #1565C0; font-weight: bold; cursor: pointer; }
+  .pc-bar { height: 8px; background: #eee; border-radius: 5px; overflow: hidden; }
+  .pc-bar-fill { height: 100%; background: #43A047; border-radius: 5px; transition: width .3s; }
+  .pc-goal-status { font-size: 12px; color: #5D4037; margin-top: 6px; }
+  .pc-set-goal { margin-top: 10px; text-align: center; }
+  .pc-target-editor { margin-top: 8px; display: flex; gap: 6px; align-items: center; }
+  .pc-target-editor input { flex: 1; padding: 9px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; }
+  .pc-btn { padding: 9px 12px; border: none; border-radius: 8px; font-size: 13px; font-weight: bold; cursor: pointer; }
+  .pc-btn.save { background: #1565C0; color: #fff; }
+  .pc-btn.cancel { background: #eee; color: #555; }
+
+  .loading { text-align: center; padding: 40px; color: #aaa; }
+  .spinner {
+    display: inline-block; width: 30px; height: 30px;
+    border: 3px solid #eee; border-top-color: #1565C0;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- アクセスお知らせオーバーレイ（未登録・エラー時のみ表示） -->
+<div class="pin-overlay" id="pinOverlay" style="display:none;">
+  <div class="pin-box">
+    <h2>📅 出勤カレンダー</h2>
+    <div class="pin-error" id="pinError" style="color:#555;font-size:14px;">読み込み中...</div>
+  </div>
+</div>
+
+<div class="header">
+  <h1 id="userName">出勤カレンダー</h1>
+</div>
+
+<!-- 給与カード（パート本人のみ・常に今月） -->
+<div id="payCard"></div>
+
+<div class="month-nav">
+  <button class="nav-btn" onclick="changeMonth(-1)">‹</button>
+  <div>
+    <div class="month-label" id="monthLabel"></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;">
+    <button class="today-btn" onclick="goToday()">今月</button>
+    <button class="nav-btn" onclick="changeMonth(1)">›</button>
+  </div>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="dot dot-scheduled"></div>予定</div>
+  <div class="legend-item"><div class="dot dot-attended"></div>出勤済</div>
+  <div class="legend-item"><div class="dot dot-koukyuu"></div>公休</div>
+  <div class="legend-item"><div class="dot dot-leave"></div>有給</div>
+  <div class="legend-item"><div class="dot dot-absent"></div>欠勤</div>
+  <div class="legend-item"><div class="dot dot-off"></div>休み(シフト無)</div>
+</div>
+
+<div id="calendarArea">
+  <div class="loading"><div class="spinner"></div><div style="margin-top:8px;font-size:13px;">読み込み中...</div></div>
+</div>
+
+<!-- 日付詳細 ボトムシート -->
+<div class="overlay" id="overlay" onclick="closeSheet()"></div>
+<div class="bottom-sheet" id="bottomSheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-date" id="sheetDate"></div>
+  <div id="sheetContent"></div>
+  <button class="btn-close" onclick="closeSheet()">閉じる</button>
+</div>
+
+<!-- シフト変更申請は「休み希望」に一本化したため廃止（2026-07-29） -->
+
+<script>
+const GAS_URL = '<?= ScriptApp.getService().getUrl() ?>';
+const LIFF_ID = '<?= PropertiesService.getScriptProperties().getProperty("LIFF_CALENDAR_ID") ?>';
+let userId     = null;
+let myName     = '';
+let curYear    = new Date().getFullYear();
+let curMonth   = new Date().getMonth() + 1;
+let calData    = null;
+let selectedDay = null;
+let myPay      = null;   // 直近の自分の給与データ（目標編集で参照）
+
+// ============================================================
+// カレンダー読み込み
+// ============================================================
+async function loadCalendar() {
+  document.getElementById('calendarArea').innerHTML =
+    '<div class="loading"><div class="spinner"></div><div style="margin-top:8px;font-size:13px;">読み込み中...</div></div>';
+
+  const MONTHS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  document.getElementById('monthLabel').textContent = curYear + '年 ' + MONTHS[curMonth - 1];
+
+  try {
+    const res  = await fetch(GAS_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body:    JSON.stringify({ type: 'get_calendar', userId, year: curYear, month: curMonth })
+    });
+    calData = await res.json();
+    if (calData.success) {
+      document.getElementById('pinOverlay').style.display = 'none';
+      document.getElementById('userName').textContent = calData.name + ' さん';
+      renderCalendar(calData);
+    } else {
+      document.getElementById('pinOverlay').style.display = 'flex';
+      document.getElementById('pinError').textContent = calData.message || '読み込みに失敗しました';
+    }
+  } catch (e) {
+    document.getElementById('calendarArea').innerHTML = '<div class="loading">読み込みに失敗しました</div>';
+  }
+}
+
+function changeMonth(delta) {
+  curMonth += delta;
+  if (curMonth > 12) { curMonth = 1;  curYear++; }
+  if (curMonth < 1)  { curMonth = 12; curYear--; }
+  if (userId) loadCalendar();
+}
+
+function goToday() {
+  curYear  = new Date().getFullYear();
+  curMonth = new Date().getMonth() + 1;
+  if (userId) loadCalendar();
+}
+
+// ============================================================
+// カレンダー描画
+// ============================================================
+const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+const STATUS_LABEL = {
+  scheduled:       '勤務予定',
+  attended:        '出勤済み',
+  clocked_in:      '出勤中',
+  absent:             '欠勤',
+  holiday:            '休日',
+  koukyuu:            '公休',
+  koukyuu_half:        '公休(半休)',
+  koukyuu_request:    '休み希望中',
+  koukyuu_request_half:'休み希望中(半休)',
+  leave:              '有給休暇',
+  leave_half:         '有給(半休)',
+  off:                '休み（シフトなし）',
+};
+
+function renderCalendar(data) {
+  const firstDay = new Date(data.year, data.month - 1, 1).getDay();
+  const totalCells = firstDay + data.days.length;
+  const rows = Math.ceil(totalCells / 7);
+
+  // サマリー計算
+  let attended = 0, absent = 0, holiday = 0;
+  data.days.forEach(d => {
+    if (d.status === 'attended' || d.status === 'clocked_in') attended++;
+    else if (d.status === 'absent') absent++;
+    else if (d.status === 'holiday' || d.status === 'koukyuu' || d.status === 'koukyuu_half') holiday++;
+  });
+
+  const weekHeader = DOW.map(d => `<div>${d}</div>`).join('');
+  let cells = Array(firstDay).fill('<div class="day-cell empty"></div>');
+  data.days.forEach(d => { cells.push(buildDayCell(d)); });
+  while (cells.length % 7 !== 0) cells.push('<div class="day-cell empty"></div>');
+
+  document.getElementById('calendarArea').innerHTML = `
+    <div class="calendar-wrap">
+      <div class="week-header">${weekHeader}</div>
+      <div class="calendar-grid">${cells.join('')}</div>
+    </div>
+    <div class="summary-bar">
+      <div class="summary-item">
+        <div class="num num-attended">${attended}</div>
+        <div class="label">出勤</div>
+      </div>
+      <div class="summary-item">
+        <div class="num num-absent">${absent}</div>
+        <div class="label">欠勤</div>
+      </div>
+      <div class="summary-item">
+        <div class="num num-holiday">${holiday}</div>
+        <div class="label">休日</div>
+      </div>
+    </div>
+  `;
+}
+
+function buildDayCell(d) {
+  const todayCls  = d.isToday   ? ' is-today'    : '';
+  const sunCls    = d.dayOfWeek === 0 ? ' is-sunday'  : '';
+  const satCls    = d.dayOfWeek === 6 ? ' is-saturday' : '';
+  const statusCls = ' status-' + d.status;
+
+  let timeInfo = '';
+  if (d.attendance && d.attendance.clockIn) {
+    timeInfo += `<div class="day-time" style="color:#2E7D32">▶${d.attendance.clockIn}</div>`;
+  } else if (d.shift && d.status === 'scheduled') {
+    timeInfo += `<div class="day-time" style="color:#1565C0">${d.shift.start}-${d.shift.end}</div>`;
+  }
+
+  return `<div class="day-cell${todayCls}${sunCls}${satCls}${statusCls}" onclick="openDayDetail(${d.day})">
+    <div class="day-num">${d.day}</div>
+    ${timeInfo}
+  </div>`;
+}
+
+// ============================================================
+// 日付詳細シート
+// ============================================================
+function openDayDetail(day) {
+  const d = calData.days.find(x => x.day === day);
+  if (!d) return;
+  selectedDay = d;
+
+  const MONTHS_JP = ['1','2','3','4','5','6','7','8','9','10','11','12'];
+  const weekDayJP = DOW[d.dayOfWeek];
+  document.getElementById('sheetDate').textContent =
+    curYear + '年' + MONTHS_JP[curMonth - 1] + '月' + d.day + '日（' + weekDayJP + '）';
+
+  const statusLabel = STATUS_LABEL[d.status] || d.status;
+  const chipCls = 'chip-' + d.status.replace('_', '-');
+
+  let html = `<span class="status-chip ${chipCls}">${statusLabel}</span>`;
+  // 半休（午前/午後）の補足。打刻があってもバッジで表示
+  if (d.leave === '午前' || d.leave === '午後') {
+    html += `<span class="status-chip chip-leave" style="margin-left:6px;">${d.leave}半休（${d.leave==='午前'?'10:00-14:00':'14:00-18:00'}）</span>`;
+  }
+  // 公休の半休バッジ（半日勤務するので打刻があってもバッジで表示）
+  if (d.koukyuuHalf === '午前' || d.koukyuuHalf === '午後') {
+    html += `<span class="status-chip chip-koukyuu-half" style="margin-left:6px;">${d.koukyuuHalf}半休（公休）</span>`;
+  }
+  // 「出勤に戻す」申請中バッジ（管理者が確定するまで公休のまま）
+  if (d.koukyuuCancel) {
+    html += `<span class="status-chip" style="margin-left:6px;background:#FFF3E0;color:#E65100;">出勤に戻す申請中</span>`;
+  }
+
+  // 打刻情報
+  if (d.attendance && d.attendance.clockIn) {
+    html += `
+      <div class="sheet-section">
+        <div class="sheet-section-title">打刻記録</div>
+        <div class="info-row"><span>出勤</span><span class="val">${d.attendance.clockIn  || '—'}</span></div>
+        <div class="info-row"><span>退勤</span><span class="val">${d.attendance.clockOut || '—'}</span></div>
+        <div class="info-row"><span>勤務時間</span><span class="val">${d.attendance.hours ? d.attendance.hours + 'h' : '—'}</span></div>
+      </div>`;
+  }
+
+  // 休み申請の誘導（未来日のみ）。シフト変更申請は「休み希望」に一本化（2026-07-29）
+  // 確定公休の日は「出勤に変えたい」誘導（同じ休み希望画面で確定公休をタップ→出勤に戻す申請）
+  if (d.isFuture) {
+    const label = d.koukyuu ? '📅 この日を出勤に変えたい（休み希望から申請）'
+                            : '📅 この日を休みにしたい（休み希望から申請）';
+    html += `<button class="btn-change" onclick="location.href='https://liff.line.me/2010927150-ZVsHVBWW'">
+      ${label}
+    </button>
+    <div style="font-size:11px;color:#888;margin-top:6px;text-align:center;">※当日の急な休みは、打刻画面の「今日は急に休みます」から</div>`;
+  }
+
+  document.getElementById('sheetContent').innerHTML = html;
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('bottomSheet').classList.add('show');
+}
+
+function closeSheet() {
+  document.getElementById('overlay').classList.remove('show');
+  document.getElementById('bottomSheet').classList.remove('show');
+  selectedDay = null;
+}
+
+// ============================================================
+// 給与カード（パート本人のみ・常に「今月」を表示）
+// ============================================================
+async function loadMyPay() {
+  const nowY = new Date().getFullYear();
+  const nowM = new Date().getMonth() + 1;
+  const box = document.getElementById('payCard');
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ type: 'get_my_payroll', userId, year: nowY, month: nowM })
+    });
+    const d = await res.json();
+    // パート以外／時給未設定／取得失敗はカード非表示
+    if (!d.success || !d.isPart || !d.payroll) { box.innerHTML = ''; myPay = null; return; }
+    const p = d.payroll;
+    if (!(p.wageWeekday || p.wageSat || p.wageSunHol)) { box.innerHTML = ''; myPay = null; return; }
+    myPay = p;
+    const yen = n => '¥' + (Number(n) || 0).toLocaleString('ja-JP');
+
+    // 手取り目安（控除設定がある場合のみ）
+    const netHtml = (p.deductRate || p.fixedDeduct) ? `
+      <div class="pc-net">
+        <div>手取り目安 <b style="color:#2E7D32;">${yen(p.netCurrentPay)}</b></div>
+        <div>見込（手取り）<b style="color:#1565C0;">${yen(p.netProjectedPay)}</b></div>
+      </div>` : '';
+
+    // 月額目標（本人設定）
+    let goalHtml;
+    if (p.monthlyTarget > 0) {
+      const pct = Math.min(100, Math.round(p.currentPay / p.monthlyTarget * 100));
+      let status;
+      if (p.goalAchieved)      status = '🎉 <b>目標達成！</b>';
+      else if (p.daysToGoal)   status = `あと <b>${p.daysToGoal}日</b> 出れば達成予定` + (p.goalWillAchieve ? '（このままなら達成見込み）' : '');
+      else                     status = '—';
+      goalHtml = `
+        <div class="pc-goal">
+          <div class="pc-goal-head">
+            <span>🎯 今月の目標 ¥${p.monthlyTarget.toLocaleString('ja-JP')}（${pct}%）</span>
+            <span class="edit" onclick="pcEditTarget()">変更</span>
+          </div>
+          <div class="pc-bar"><div class="pc-bar-fill" style="width:${pct}%;${p.goalAchieved ? 'background:#2E7D32;' : ''}"></div></div>
+          <div class="pc-goal-status">${status}</div>
+          <div id="pcTargetEditor"></div>
+        </div>`;
+    } else {
+      goalHtml = `<div class="pc-set-goal"><button class="pc-btn save" onclick="pcEditTarget()">🎯 今月の目標を設定する</button><div id="pcTargetEditor"></div></div>`;
+    }
+
+    box.innerHTML = `
+      <div class="pay-card">
+        <div class="pc-title">💰 <b>${nowM}月</b>の給与（目安）</div>
+        <div class="pc-stats">
+          <div class="pc-stat now"><div class="pc-label">今月ここまで</div><div class="pc-val">${yen(p.currentPay)}</div></div>
+          <div class="pc-stat est"><div class="pc-label">月末見込</div><div class="pc-val">${yen(p.projectedPay)}</div></div>
+        </div>
+        ${netHtml}
+        ${goalHtml}
+        <div class="pc-sub">勤務 ${p.totalHours}h ・ 出勤${p.workedDays}日<br><b style="color:#E65100;">※金額はすべて“あくまで目安”です。</b>見込は予定通り出た場合の概算、手取りも概算のため、実際の支給額とは異なる場合があります。</div>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = ''; // 給与カードは失敗しても本体に影響させない
+  }
+}
+
+// 目標の編集フォームを開く
+function pcEditTarget() {
+  const box = document.getElementById('pcTargetEditor');
+  if (!box) return;
+  const cur = (myPay && myPay.monthlyTarget) ? myPay.monthlyTarget : '';
+  box.innerHTML = `
+    <div class="pc-target-editor">
+      <input type="number" id="pcTargetInput" min="0" step="1000" inputmode="numeric" placeholder="例：150000" value="${cur}">
+      <button class="pc-btn save" onclick="pcSaveTarget()">保存</button>
+      <button class="pc-btn cancel" onclick="loadMyPay()">やめる</button>
+    </div>`;
+  const inp = document.getElementById('pcTargetInput');
+  if (inp) inp.focus();
+}
+
+// 目標を保存（本人設定）
+async function pcSaveTarget() {
+  const el = document.getElementById('pcTargetInput');
+  if (!el) return;
+  const v = Math.max(0, Number(el.value) || 0);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ type: 'set_my_target', userId, amount: v })
+    });
+    const d = await res.json();
+    if (d.success) { loadMyPay(); }
+    else { alert('保存に失敗しました：' + (d.message || '')); }
+  } catch (e) {
+    alert('通信エラーが発生しました');
+  }
+}
+
+// ============================================================
+// LIFF 初期化
+// ============================================================
+(async () => {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+    const profile = await liff.getProfile();
+    userId = profile.userId;
+    await loadCalendar();
+    loadMyPay();
+  } catch (e) {
+    console.error('LIFF init error:', e);
+    document.getElementById('pinOverlay').style.display = 'flex';
+    document.getElementById('pinError').textContent = 'LINEアプリ内から開いてください。';
+  }
+})();
+</script>
+</body>
+</html>

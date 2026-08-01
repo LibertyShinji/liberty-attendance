@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>シフト希望申告</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, 'Hiragino Sans', sans-serif; background: #f0f2f5; min-height: 100vh; }
+  .header { background: #1565C0; color: #fff; padding: 16px 20px; text-align: center; font-size: 18px; font-weight: bold; }
+  .container { padding: 16px; max-width: 460px; margin: 0 auto; }
+  .card { background: #fff; border-radius: 14px; padding: 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.06); }
+  .name { font-size: 17px; font-weight: bold; color: #1565C0; }
+  .sub { font-size: 13px; color: #777; margin-top: 4px; }
+  .monthnav { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 10px; }
+  .navbtn { border: none; background: #E3F2FD; color: #1565C0; border-radius: 8px; width: 38px; height: 38px; font-size: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .dow { text-align: center; font-size: 11px; color: #999; padding: 3px 0; }
+  .dow.sun { color: #E53935; } .dow.sat { color: #1E88E5; }
+  .cell { aspect-ratio: 1/1; display: flex; align-items: center; justify-content: center; flex-direction: column;
+          border-radius: 8px; font-size: 15px; border: 1.5px solid #e0e0e0; background: #fff; color: #333; cursor: pointer; user-select: none; }
+  .cell.req { background: #E3F2FD; color: #1565C0; border-color: #64B5F6; font-weight: bold; }
+  .cell .tm { font-size: 8px; line-height: 1; margin-top: 2px; }
+  .cell.fixed { background: #ECEFF1; color: #607D8B; border-color: #cfd8dc; cursor: default; }
+  .cell.past { background: #fafafa; color: #ccc; border-color: #eee; cursor: not-allowed; }
+  .cell.blank { background: transparent; border: none; cursor: default; }
+  .cell.sun { color: #E53935; } .cell.sat { color: #1E88E5; }
+  .legend { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; font-size: 11px; color: #777; margin: 12px 0; }
+  .legdot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 3px; }
+  .list { margin-top: 6px; }
+  .list-title { font-size: 12px; color: #888; font-weight: bold; margin: 14px 0 8px; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid #f2f2f2; font-size: 13px; }
+  .row .d { width: 64px; color: #333; font-weight: bold; flex-shrink: 0; }
+  .row input[type=time] { border: 1px solid #ddd; border-radius: 6px; padding: 6px 4px; font-size: 13px; width: 84px; }
+  .row .tilde { color: #999; }
+  .row .rm { margin-left: auto; border: none; background: #FFEBEE; color: #C62828; border-radius: 6px; width: 26px; height: 26px; font-size: 14px; flex-shrink: 0; }
+  .empty-list { font-size: 12px; color: #aaa; text-align: center; padding: 10px 0; }
+  .btn { width: 100%; padding: 16px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; color: #fff; background: #1565C0; margin-top: 14px; }
+  .btn:disabled { background: #bbb; }
+  .msg { padding: 12px; border-radius: 8px; font-size: 14px; margin-top: 12px; display: none; }
+  .msg.success { background: #e8f5e9; color: #2E7D32; }
+  .msg.error { background: #ffebee; color: #C62828; }
+  .msg.info { background: #e3f2fd; color: #1565C0; }
+  .loading { text-align: center; padding: 40px; color: #999; }
+  .spinner { width: 36px; height: 36px; border: 4px solid #eee; border-top-color: #1565C0; border-radius: 50%; animation: spin .7s linear infinite; margin: 0 auto 10px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="header">📅 シフト希望申告</div>
+<div class="container">
+  <div id="loading" class="loading"><div class="spinner"></div>読み込み中...</div>
+  <div id="main" style="display:none;">
+    <div class="card">
+      <div class="name" id="empName"></div>
+      <div class="sub">出勤できる日をタップして選び、下のリストで時間帯を入力してください。</div>
+      <div class="monthnav">
+        <button class="navbtn" onclick="changeMonth(-1)">‹</button>
+        <strong id="monthLabel"></strong>
+        <button class="navbtn" onclick="changeMonth(1)">›</button>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="legend">
+        <span><span class="legdot" style="background:#E3F2FD;border:1px solid #64B5F6;"></span>希望（未確定）</span>
+        <span><span class="legdot" style="background:#ECEFF1;"></span>確定済</span>
+      </div>
+      <div class="list-title">選択した日の時間帯</div>
+      <div class="list" id="list"></div>
+      <button class="btn" id="submitBtn" onclick="submit()">この内容でシフト希望を送信</button>
+      <div class="msg" id="msg"></div>
+      <div style="font-size:11px;color:#999;margin-top:10px;line-height:1.6;">
+        ・出勤できる日をタップすると仮の時間帯（10:00〜18:00）で追加されます。下のリストで実際の時間帯に修正してください。<br>
+        ・<b>確定済み（灰色）の日は変更できません。</b>変更が必要な場合は管理者にご連絡ください。<br>
+        ・今日と過去の日はここでは選べません。<br>
+        ・送信後、管理者が確認してシフトを確定します。
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbxiSxFn4_sJ4vYphaC0cyt77fhf400fwxVNLY56NtkOLBMtbwft6ERj4oaLERGBn49b/exec';
+const LIFF_ID = '2010927150-A7us46OW';
+const DOW = ['日','月','火','水','木','金','土'];
+const DEFAULT_START = '10:00', DEFAULT_END = '18:00';
+let userId = null, year, month, data = null, sel = new Map(); // ds -> {start,end}
+let MIN_Y, MIN_M; // 当月（これより前の月には戻れない）
+const todayDs = () => { const n = new Date(); return n.getFullYear()+'/'+String(n.getMonth()+1).padStart(2,'0')+'/'+String(n.getDate()).padStart(2,'0'); };
+
+async function api(p) {
+  const res = await fetch(GAS_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(Object.assign({userId}, p)) });
+  return res.json();
+}
+
+async function load() {
+  const d = await api({ type:'get_my_shift', year, month });
+  if (!d.success) { showMsg('error', d.message); return; }
+  data = d;
+  const t = todayDs();
+  sel = new Map((d.kibou || []).filter(x => x.d > t).map(x => [x.d, { start: x.start, end: x.end }]));
+  document.getElementById('empName').textContent = d.name + ' さん';
+  document.getElementById('monthLabel').textContent = year + '年 ' + month + '月';
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  render();
+}
+
+function changeMonth(delta) {
+  let y = year, m = month + delta;
+  if (m > 12) { m = 1; y++; }
+  if (m < 1) { m = 12; y--; }
+  if (y < MIN_Y || (y === MIN_Y && m < MIN_M)) return;
+  year = y; month = m;
+  document.getElementById('msg').style.display = 'none';
+  load();
+}
+
+function render() {
+  const dim = data.daysInMonth;
+  const first = new Date(year, month-1, 1).getDay();
+  const confMap = new Map((data.confirmed || []).map(x => [x.d, { start: x.start, end: x.end }]));
+  const todayStr = todayDs();
+  let html = DOW.map((d,i)=>`<div class="dow ${i===0?'sun':i===6?'sat':''}">${d}</div>`).join('');
+  for (let i=0;i<first;i++) html += `<div class="cell blank"></div>`;
+  for (let d=1; d<=dim; d++) {
+    const ds = year+'/'+String(month).padStart(2,'0')+'/'+String(d).padStart(2,'0');
+    const dow = new Date(year, month-1, d).getDay();
+    const dowcls = dow===0?'sun':dow===6?'sat':'';
+    if (confMap.has(ds)) {
+      const s = confMap.get(ds);
+      html += `<div class="cell fixed">${d}<span class="tm">${s.start}-${s.end}</span></div>`; continue;
+    }
+    if (ds <= todayStr) { html += `<div class="cell past ${dowcls}">${d}</div>`; continue; }
+    const s = sel.get(ds);
+    const cls = s ? 'req' : '';
+    const tm = s ? `<span class="tm">${s.start}-${s.end}</span>` : '';
+    html += `<div class="cell ${cls} ${dowcls}" onclick="toggle('${ds}')">${d}${tm}</div>`;
+  }
+  document.getElementById('grid').innerHTML = html;
+  renderList();
+}
+
+function toggle(ds) {
+  if (sel.has(ds)) sel.delete(ds);
+  else sel.set(ds, { start: DEFAULT_START, end: DEFAULT_END });
+  render();
+}
+
+function renderList() {
+  const entries = Array.from(sel.entries()).sort((a,b) => a[0] < b[0] ? -1 : 1);
+  if (!entries.length) {
+    document.getElementById('list').innerHTML = '<div class="empty-list">まだ選択されていません</div>';
+    document.getElementById('submitBtn').disabled = true;
+    return;
+  }
+  document.getElementById('submitBtn').disabled = false;
+  document.getElementById('list').innerHTML = entries.map(([ds, t]) => {
+    const md = ds.split('/').slice(1).join('/');
+    return `<div class="row">
+      <span class="d">${md}</span>
+      <input type="time" value="${t.start}" onchange="setTime('${ds}','start',this.value)">
+      <span class="tilde">〜</span>
+      <input type="time" value="${t.end}" onchange="setTime('${ds}','end',this.value)">
+      <button class="rm" onclick="removeDay('${ds}')">×</button>
+    </div>`;
+  }).join('');
+}
+
+function setTime(ds, key, value) {
+  const cur = sel.get(ds);
+  if (!cur) return;
+  cur[key] = value;
+  // グリッド側の時刻表示だけ更新（リストの再構築で入力フォーカスが飛ばないようにする）
+  render();
+}
+
+function removeDay(ds) {
+  sel.delete(ds);
+  render();
+}
+
+async function submit() {
+  const bad = Array.from(sel.entries()).filter(([ds, t]) => !t.start || !t.end || t.start >= t.end);
+  if (bad.length) { showMsg('error', '開始時刻は終了時刻より前にしてください（' + bad.map(x => x[0]).join('、') + '）'); return; }
+  showMsg('info', '送信中...');
+  const entries = Array.from(sel.entries()).map(([d, t]) => ({ d, start: t.start, end: t.end })).sort((a,b) => a.d < b.d ? -1 : 1);
+  const d = await api({ type:'submit_shift', entries, year, month });
+  if (d.success) {
+    showMsg('success', 'シフト希望を送信しました（' + d.count + '日分）。管理者の確認をお待ちください。');
+    setTimeout(() => { try { liff.closeWindow(); } catch(e){} }, 1800);
+  } else showMsg('error', d.message);
+}
+
+function showMsg(type, text) {
+  const el = document.getElementById('msg');
+  el.className = 'msg ' + type; el.textContent = text; el.style.display = 'block';
+}
+
+(async () => {
+  const n = new Date();
+  MIN_Y = n.getFullYear(); MIN_M = n.getMonth() + 1;
+  year = MIN_Y; month = MIN_M;
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+    userId = (await liff.getProfile()).userId;
+    await load();
+  } catch(e) {
+    document.getElementById('loading').innerHTML = 'LINEアプリ内から開いてください。<br>' + (e&&e.message?e.message:'');
+  }
+})();
+</script>
+</body>
+</html>
