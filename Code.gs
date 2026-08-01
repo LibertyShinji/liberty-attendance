@@ -156,7 +156,7 @@ function handleLiffApi(body) {
     // 管理者：管理者全員にプッシュ通知が届くか診断（友だち状態・UserID有効性）
     case 'check_admins_reachable': return checkAdminsReachable(body.userId);
     // 管理者：6ボタンのリッチメニューを再設定（画像はGitHub Pagesから取得）
-    case 'setup_richmenu6':       return setupRichMenu6(body.userId);
+    case 'setup_richmenu7':       return setupRichMenu7(body.userId);
     // 管理者：有給残の手動訂正（used を指定値に。remaining は total-used で再計算）
     case 'adjust_leave_used':     return adjustLeaveUsed(body.userId, body.employeeId, body.year, body.used);
     // 管理者：有給申請の取消（誤申請の削除。承認済みなら残日数を戻す）
@@ -1468,9 +1468,9 @@ function adjustLeaveUsed(adminUserId, employeeId, year, used) {
   return { success: false, message: '該当年度の有給残データが見つかりません' };
 }
 
-// 管理者：6ボタンのリッチメニューを作成し直す。
-// 画像は GitHub Pages の richmenu6.jpg を取得して使用。完了後に旧メニューを削除しデフォルト設定。
-function setupRichMenu6(adminUserId) {
+// 管理者：7ボタンのリッチメニューを作成し直す（シフト希望申告を追加した2026-08版）。
+// 画像はGASに内蔵したbase64（RichMenuImage.gs）を使用。完了後に旧メニューを削除しデフォルト設定。
+function setupRichMenu7(adminUserId) {
   const admin = getEmployeeByLineId(adminUserId);
   if (!admin || !admin.isAdmin) return { success: false, message: '管理者権限がありません' };
 
@@ -1479,19 +1479,23 @@ function setupRichMenu6(adminUserId) {
   const liff = function(id) { return 'https://liff.line.me/' + id; };
   const log = [];
 
-  // 2500x1686 を 3列×2段。各セル bounds(x,y,w,h)。
+  // 2500x1686 を 4列×2段（8セル・最後の1枠はブランド表示のみでタップ無効）。
+  const CW = 625, CH = 843;
+  const cell = (col, row) => ({ x: col * CW, y: row * CH, width: CW, height: CH });
   const richmenu = {
     size: { width: 2500, height: 1686 },
     selected: true,
-    name: '出勤管理メニュー6',
+    name: '出勤管理メニュー7',
     chatBarText: 'メニュー',
     areas: [
-      { bounds: { x: 0,    y: 0,   width: 833, height: 843 }, action: { type: 'uri', uri: liff(cfg.LIFF_ATTENDANCE_ID) } }, // 打刻
-      { bounds: { x: 833,  y: 0,   width: 833, height: 843 }, action: { type: 'uri', uri: liff(cfg.LIFF_LEAVE_ID) } },      // 有給申請
-      { bounds: { x: 1666, y: 0,   width: 834, height: 843 }, action: { type: 'uri', uri: liff(cfg.LIFF_CALENDAR_ID) } },   // 自分の休み
-      { bounds: { x: 0,    y: 843, width: 833, height: 843 }, action: { type: 'uri', uri: liff(cfg.LIFF_TEAM_ID) } },       // 全員カレンダー
-      { bounds: { x: 833,  y: 843, width: 833, height: 843 }, action: { type: 'uri', uri: liff(cfg.LIFF_KIBOU_ID) } },      // 休み希望
-      { bounds: { x: 1666, y: 843, width: 834, height: 843 }, action: { type: 'uri', uri: liff(cfg.LIFF_ADMIN_ID) } },      // 管理者
+      { bounds: cell(0, 0), action: { type: 'uri', uri: liff(cfg.LIFF_ATTENDANCE_ID) } }, // 打刻
+      { bounds: cell(1, 0), action: { type: 'uri', uri: liff(cfg.LIFF_LEAVE_ID) } },      // 有給申請
+      { bounds: cell(2, 0), action: { type: 'uri', uri: liff(cfg.LIFF_SHIFT_ID) } },      // シフト希望申告
+      { bounds: cell(3, 0), action: { type: 'uri', uri: liff(cfg.LIFF_KIBOU_ID) } },      // 休み希望
+      { bounds: cell(0, 1), action: { type: 'uri', uri: liff(cfg.LIFF_CALENDAR_ID) } },   // 自分の休み
+      { bounds: cell(1, 1), action: { type: 'uri', uri: liff(cfg.LIFF_TEAM_ID) } },       // 全員カレンダー
+      { bounds: cell(2, 1), action: { type: 'uri', uri: liff(cfg.LIFF_ADMIN_ID) } },      // 管理者
+      // (3,1) はブランド表示セル。タップ領域は定義しない（無反応）。
     ]
   };
 
@@ -1508,7 +1512,7 @@ function setupRichMenu6(adminUserId) {
   log.push('created ' + newId);
 
   // 2) 画像アップロード（GASに内蔵したbase64画像を使用）
-  const imgBlob = Utilities.newBlob(Utilities.base64Decode(getRichMenu6Base64()), 'image/jpeg', 'richmenu6.jpg');
+  const imgBlob = Utilities.newBlob(Utilities.base64Decode(getRichMenu7Base64()), 'image/jpeg', 'richmenu7.jpg');
   const upRes = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + newId + '/content', {
     method: 'post', contentType: 'image/jpeg',
     headers: { Authorization: 'Bearer ' + token },
@@ -1545,6 +1549,20 @@ function setupRichMenu6(adminUserId) {
   }
 
   return { success: true, richMenuId: newId, log: log };
+}
+
+// GASエディタから引数なしで実行するための補助関数：社員マスタの最初の管理者を使ってsetupRichMenu7を呼ぶ。
+function debugSetupRichMenu7() {
+  const ss = SpreadsheetApp.openById(getConfig().SPREADSHEET_ID);
+  const rows = ss.getSheetByName(SHEETS.EMPLOYEES).getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    const isAdmin = rows[i][6] === true || rows[i][6] === 'TRUE';
+    const lineUserId = rows[i][5];
+    if (isAdmin && lineUserId) {
+      return setupRichMenu7(String(lineUserId).trim());
+    }
+  }
+  return { success: false, message: 'LINE紐付け済みの管理者が見つかりません' };
 }
 
 // 管理者全員にプッシュ通知が届くか診断。
