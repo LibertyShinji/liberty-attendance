@@ -60,6 +60,10 @@ function hhmmToMinutes_(s) {
 // ============================================================
 
 function doGet(e) {
+  // TimeTree等の外部カレンダーアプリ向け：確定シフトのiCal配信（閲覧専用・鍵付きURL）
+  if (e && e.parameter && e.parameter.feed === 'shifts') {
+    return handleShiftsFeed_(e);
+  }
   const page = (e && e.parameter && e.parameter.page) || 'leave';
   const pageMap = {
     admin:      ['AdminDashboard', '管理者ダッシュボード'],
@@ -2641,4 +2645,86 @@ function initProperties() {
     LIFF_SHIFT_ID:            '2010927150-A7us46OW',
   }, false);
   Logger.log('プロパティ設定完了');
+}
+
+// ============================================================
+// 確定シフトのiCal配信（TimeTree等の「外部カレンダーの取り込み」用・閲覧専用）
+// 2026-08 追加：入力はLiberty勤怠システム側のみ、TimeTree側では見るだけという運用のため、
+// 片方向（本システム→外部カレンダー）のみ対応。逆方向（TimeTreeの入力を本システムに取り込む）は非対応。
+// ============================================================
+
+// URLに使うランダムな鍵。スクリプトプロパティに保存し、無ければ初回アクセス時に自動生成する。
+function getFeedKey_() {
+  const props = PropertiesService.getScriptProperties();
+  let key = props.getProperty('FEED_KEY');
+  if (!key) {
+    key = Utilities.getUuid().replace(/-/g, '');
+    props.setProperty('FEED_KEY', key);
+  }
+  return key;
+}
+
+function handleShiftsFeed_(e) {
+  const key = (e.parameter && e.parameter.key) || '';
+  if (key !== getFeedKey_()) {
+    return ContentService.createTextOutput('Forbidden: invalid key').setMimeType(ContentService.MimeType.TEXT);
+  }
+  return ContentService.createTextOutput(buildShiftsIcs_()).setMimeType(ContentService.MimeType.ICAL);
+}
+
+// GASエディタから実行して、TimeTreeに登録するフィードURLをログに出す（引数なしで実行できる）。
+function debugPrintShiftsFeedUrl() {
+  const url = ScriptApp.getService().getUrl() + '?feed=shifts&key=' + getFeedKey_();
+  Logger.log(url);
+  return url;
+}
+
+function buildShiftsIcs_() {
+  const ss = SpreadsheetApp.openById(getConfig().SPREADSHEET_ID);
+
+  const empName = {};
+  ss.getSheetByName(SHEETS.EMPLOYEES).getDataRange().getValues().slice(1).forEach(r => {
+    if (r[0]) empName[r[0]] = r[1];
+  });
+
+  const today = new Date();
+  const rangeStart = new Date(today.getTime() - 30 * 86400000);
+  const rangeEnd   = new Date(today.getTime() + 90 * 86400000);
+  const startStr = fmt(rangeStart, 'yyyy/MM/dd');
+  const endStr   = fmt(rangeEnd, 'yyyy/MM/dd');
+
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Liberty//AttendanceShift//JA',
+    'CALSCALE:GREGORIAN', 'X-WR-CALNAME:Liberty 確定シフト',
+  ];
+
+  const sheet = ss.getSheetByName(SHEETS.SHIFT);
+  const rows = sheet ? sheet.getDataRange().getValues().slice(1) : [];
+  const nowUtc = Utilities.formatDate(new Date(), 'Etc/UTC', "yyyyMMdd'T'HHmmss'Z'");
+
+  rows.forEach(r => {
+    const empId = r[0], dateVal = r[1], start = r[3], end = r[4], status = r[5] || '確定';
+    if (!empId || !dateVal || status !== '確定') return;
+    const ds = fmt(new Date(dateVal), 'yyyy/MM/dd');
+    if (ds < startStr || ds > endStr) return;
+    if (!isValidHHmm_(start) || !isValidHHmm_(end)) return;
+
+    const [y, m, d] = ds.split('/').map(Number);
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    const dtStart = Utilities.formatDate(new Date(y, m - 1, d, sh, sm), 'Etc/UTC', "yyyyMMdd'T'HHmmss'Z'");
+    const dtEnd   = Utilities.formatDate(new Date(y, m - 1, d, eh, em), 'Etc/UTC', "yyyyMMdd'T'HHmmss'Z'");
+    const name = empName[empId] || empId;
+
+    lines.push('BEGIN:VEVENT');
+    lines.push('UID:shift-' + empId + '-' + ds.replace(/\//g, '') + '@liberty-attendance');
+    lines.push('DTSTAMP:' + nowUtc);
+    lines.push('DTSTART:' + dtStart);
+    lines.push('DTEND:' + dtEnd);
+    lines.push('SUMMARY:' + name + ' 出勤（' + start + '-' + end + '）');
+    lines.push('END:VEVENT');
+  });
+
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
 }
