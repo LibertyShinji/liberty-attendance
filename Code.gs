@@ -141,7 +141,7 @@ function handleLiffApi(body) {
     case 'request_shift_all':    return requestShiftFromAll(body.userId, body.year, body.month);
     // 社員設定（雇用形態・時給）・給与集計
     case 'get_employees_admin':  return getEmployeesAdmin(body.userId);
-    case 'save_employee_settings': return saveEmployeeSettings(body.userId, body.employeeId, body.empType, body.wageWeekday, body.wageSat, body.wageSunHol, body.deductRate, body.fixedDeduct);
+    case 'save_employee_settings': return saveEmployeeSettings(body.userId, body.employeeId, body.empType, body.wageWeekday, body.wageSat, body.wageSunHol, body.deductRate, body.fixedDeduct, body.fixedAllowance);
     case 'get_employees_full':   return getEmployeesFull(body.userId);
     case 'add_employee':         return addEmployeeAdmin(body.userId, body.name, body.empType, body.hireDate, body.annualDays);
     case 'retire_employee':      return setEmployeeActive(body.userId, body.employeeId, false);
@@ -685,24 +685,33 @@ function getEmployeesAdmin(adminUserId) {
   return { success: true, employees };
 }
 
-function saveEmployeeSettings(adminUserId, employeeId, empType, wageWeekday, wageSat, wageSunHol, deductRate, fixedDeduct) {
+// 既存スプレッドシートに「固定手当」列（P列）が無い場合に自動で見出しを追加する（2026-08追加分の後方互換対応）。
+function ensureFixedAllowanceColumn_(sheet) {
+  if (sheet.getLastColumn() < 16 || !sheet.getRange(1, 16).getValue()) {
+    sheet.getRange(1, 16).setValue('固定手当').setBackground('#37474F').setFontColor('#ffffff').setFontWeight('bold');
+  }
+}
+
+function saveEmployeeSettings(adminUserId, employeeId, empType, wageWeekday, wageSat, wageSunHol, deductRate, fixedDeduct, fixedAllowance) {
   const admin = getEmployeeByLineId(adminUserId);
   if (!admin || !admin.isAdmin) return { success: false, message: '管理者権限がありません' };
 
-  // 時給・控除率・固定控除額は「値が渡された時だけ」更新する（未指定なら既存値を維持）。
+  // 時給・控除率・固定控除額・固定手当は「値が渡された時だけ」更新する（未指定なら既存値を維持）。
   // ← 雇用形態だけ保存する操作で時給が0に上書きされる事故を防ぐ。
   const hasVal = v => v !== undefined && v !== null && v !== '' && !isNaN(Number(v));
 
   const sheet = SpreadsheetApp.openById(getConfig().SPREADSHEET_ID).getSheetByName(SHEETS.EMPLOYEES);
+  ensureFixedAllowanceColumn_(sheet);
   const rows = sheet.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === employeeId) {
       sheet.getRange(i + 1, 9).setValue(empType || '正社員');   // I 雇用形態
-      if (hasVal(wageWeekday)) sheet.getRange(i + 1, 10).setValue(Number(wageWeekday)); // J 平日時給
-      if (hasVal(wageSat))     sheet.getRange(i + 1, 11).setValue(Number(wageSat));     // K 土曜時給
-      if (hasVal(wageSunHol))  sheet.getRange(i + 1, 12).setValue(Number(wageSunHol));  // L 日祝時給
-      if (hasVal(deductRate))  sheet.getRange(i + 1, 13).setValue(Number(deductRate));  // M 控除率(%)
-      if (hasVal(fixedDeduct)) sheet.getRange(i + 1, 15).setValue(Number(fixedDeduct)); // O 固定控除額(円)
+      if (hasVal(wageWeekday))   sheet.getRange(i + 1, 10).setValue(Number(wageWeekday));   // J 平日時給
+      if (hasVal(wageSat))       sheet.getRange(i + 1, 11).setValue(Number(wageSat));       // K 土曜時給
+      if (hasVal(wageSunHol))    sheet.getRange(i + 1, 12).setValue(Number(wageSunHol));    // L 日祝時給
+      if (hasVal(deductRate))    sheet.getRange(i + 1, 13).setValue(Number(deductRate));    // M 控除率(%)
+      if (hasVal(fixedDeduct))   sheet.getRange(i + 1, 15).setValue(Number(fixedDeduct));   // O 固定控除額(円)
+      if (hasVal(fixedAllowance)) sheet.getRange(i + 1, 16).setValue(Number(fixedAllowance)); // P 固定手当(円)
       return { success: true };
     }
   }
@@ -718,8 +727,9 @@ function getEmployeesFull(adminUserId) {
   const admin = getEmployeeByLineId(adminUserId);
   if (!admin || !admin.isAdmin) return { success: false, message: '管理者権限がありません' };
 
-  const rows = SpreadsheetApp.openById(getConfig().SPREADSHEET_ID)
-    .getSheetByName(SHEETS.EMPLOYEES).getDataRange().getValues();
+  const empSheet = SpreadsheetApp.openById(getConfig().SPREADSHEET_ID).getSheetByName(SHEETS.EMPLOYEES);
+  ensureFixedAllowanceColumn_(empSheet);
+  const rows = empSheet.getDataRange().getValues();
   const employees = rows.slice(1).map(r => ({
     id:        r[0],
     name:      r[1],
@@ -734,6 +744,7 @@ function getEmployeesFull(adminUserId) {
     deductRate:  Number(r[12]) || 0,
     monthlyTarget: Number(r[13]) || 0,
     fixedDeduct: Number(r[14]) || 0,
+    fixedAllowance: Number(r[15]) || 0,
     hasLineId: !!(r[5] && String(r[5]).trim()),
   }));
   return { success: true, employees };
@@ -850,7 +861,8 @@ function computePartPayroll_(year, month, filterId) {
       wageWeekday: Number(r[9]) || 0, wageSat: Number(r[10]) || 0, wageSunHol: Number(r[11]) || 0,
       deductRate: Number(r[12]) || 0,      // M 控除率(%)：雇用保険など収入比例分
       monthlyTarget: Number(r[13]) || 0,   // N 月額目標(円)：本人が設定
-      fixedDeduct: Number(r[14]) || 0      // O 固定控除額(円)：社保など毎月固定分
+      fixedDeduct: Number(r[14]) || 0,     // O 固定控除額(円)：社保など毎月固定分
+      fixedAllowance: Number(r[15]) || 0   // P 固定手当(円)：通勤手当など毎月固定で加算する分
     }));
   if (filterId) parts = parts.filter(p => p.id === filterId);
   if (!parts.length) return [];
@@ -885,8 +897,9 @@ function computePartPayroll_(year, month, filterId) {
     const hw = round(a['平日']), hs = round(a['土曜']), hh = round(a['日祝']);
     const totalHours = round(hw + hs + hh);
 
-    // 現在の給与（額面・目安）
-    const currentPay = yen(a['平日'] * p.wageWeekday + a['土曜'] * p.wageSat + a['日祝'] * p.wageSunHol);
+    // 時給分の給与（固定手当を含まない実働分のみ）
+    const hourlyPay = yen(a['平日'] * p.wageWeekday + a['土曜'] * p.wageSat + a['日祝'] * p.wageSunHol);
+    const fixedAllowance = Math.max(0, p.fixedAllowance); // 通勤手当など・日数に関わらず毎月固定で加算
 
     // 予定出勤日数（当月・公休/承認有給以外、半休0.5）
     const kmap = kou[p.id] || {};
@@ -896,16 +909,21 @@ function computePartPayroll_(year, month, filterId) {
     Object.keys(lmap).forEach(d => { if (!kmap[d]) offDays += wHalf(lmap[d]); });
     const plannedWorkDays = Math.max(0, daysInMonth - offDays);
 
-    // 見込＝出勤日平均 × 予定出勤日数（下限＝現在給与）
+    // 見込（時給分）＝出勤日平均 × 予定出勤日数（下限＝現在の時給分）
     const workedDays = Object.keys(a.days).length;
-    const avgPerDay = workedDays > 0 ? currentPay / workedDays : 0;
-    let projectedPay = currentPay;
+    const avgPerDay = workedDays > 0 ? hourlyPay / workedDays : 0;
+    let projectedHourly = hourlyPay;
     if (workedDays > 0) {
-      projectedPay = Math.max(currentPay, yen(avgPerDay * plannedWorkDays));
+      projectedHourly = Math.max(hourlyPay, yen(avgPerDay * plannedWorkDays));
     }
 
-    // 手取り目安＝額面 −（固定控除額：社保など）−（額面×控除率：雇用保険など）
+    // 額面＝時給分＋固定手当（固定手当は日数に関わらず毎月満額）
+    const currentPay   = hourlyPay + fixedAllowance;
+    const projectedPay = projectedHourly + fixedAllowance;
+
+    // 手取り目安＝額面（時給分＋固定手当）−（固定控除額：社保など）−（額面×控除率：雇用保険など）
     // 社保は毎月ほぼ固定なので固定額で引く。マイナスにはしない。
+    // ※手当の税・社保上の扱い（非課税限度額など）はここでは考慮していない目安計算です。正確な金額は顧問社労士・税理士にご確認ください。
     const rate = Math.min(100, Math.max(0, p.deductRate)) / 100;
     const fixedDed = Math.max(0, p.fixedDeduct);
     const netCurrentPay   = Math.max(0, yen(currentPay   - fixedDed - currentPay   * rate));
@@ -922,9 +940,9 @@ function computePartPayroll_(year, month, filterId) {
     return {
       id: p.id, name: p.name,
       wageWeekday: p.wageWeekday, wageSat: p.wageSat, wageSunHol: p.wageSunHol,
-      deductRate: p.deductRate, fixedDeduct: p.fixedDeduct,
+      deductRate: p.deductRate, fixedDeduct: p.fixedDeduct, fixedAllowance: fixedAllowance,
       hoursWeekday: hw, hoursSat: hs, hoursSunHol: hh, totalHours: totalHours,
-      currentPay: currentPay, projectedPay: projectedPay,
+      hourlyPay: hourlyPay, currentPay: currentPay, projectedPay: projectedPay,
       netCurrentPay: netCurrentPay, netProjectedPay: netProjectedPay,
       workedDays: workedDays, plannedWorkDays: round(plannedWorkDays),
       monthlyTarget: target,
@@ -2371,7 +2389,7 @@ function setupSpreadsheet() {
   initSheet(SHEETS.EMPLOYEES, [
     '社員ID', '氏名', 'PINコード', '入社日', '年間有給日数',
     'LINE UserID', '管理者', '有効',
-    '雇用形態', '平日時給', '土曜時給', '日祝時給', '控除率', '月額目標', '固定控除額'
+    '雇用形態', '平日時給', '土曜時給', '日祝時給', '控除率', '月額目標', '固定控除額', '固定手当'
   ]);
   initSheet(SHEETS.ATTENDANCE, [
     '日付', '社員ID', '氏名', '出勤時刻', '退勤時刻', '勤務時間（時間）',

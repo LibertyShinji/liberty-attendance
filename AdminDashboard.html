@@ -900,6 +900,7 @@ async function loadPayroll() {
         勤務 <b>${p.totalHours}h</b>（平日${p.hoursWeekday}／土${p.hoursSat}／日祝${p.hoursSunHol}h）
         ・出勤${p.workedDays}日／予定${p.plannedWorkDays}日<br>
         時給 平日¥${(p.wageWeekday||0).toLocaleString('ja-JP')}／土¥${(p.wageSat||0).toLocaleString('ja-JP')}／日祝¥${(p.wageSunHol||0).toLocaleString('ja-JP')}
+        ${p.fixedAllowance ? `<br>時給分 ${yen(p.hourlyPay)} ＋ 固定手当 ${yen(p.fixedAllowance)} ＝ 額面 ${yen(p.currentPay)}` : ''}
       </div>
     </div>`).join('');
   document.getElementById('payTable').innerHTML = cards;
@@ -940,13 +941,17 @@ function renderEmpSettings() {
           <div style="flex:1;"><label style="font-size:11px;color:#999;">日祝</label>
             <input type="number" id="wl_${e.id}" value="${e.wageSunHol||0}" min="0" step="10" onchange="saveEmpWage('${e.id}')" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:14px;box-sizing:border-box;"></div>
         </div>
+        <div style="margin-top:8px;">
+          <label style="font-size:11px;color:#999;">固定手当（円・通勤手当など、出勤日数に関わらず毎月満額）</label>
+          <input type="number" id="wa_${e.id}" value="${e.fixedAllowance||0}" min="0" step="100" onchange="saveEmpWage('${e.id}')" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:14px;box-sizing:border-box;">
+        </div>
         <div style="margin-top:8px;display:flex;gap:6px;">
           <div style="flex:1;"><label style="font-size:11px;color:#999;">固定控除額（円・社保など）</label>
             <input type="number" id="wf_${e.id}" value="${e.fixedDeduct||0}" min="0" step="100" onchange="saveEmpWage('${e.id}')" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:14px;box-sizing:border-box;"></div>
           <div style="width:110px;"><label style="font-size:11px;color:#999;">控除率（％・雇用保険等）</label>
             <input type="number" id="wr_${e.id}" value="${e.deductRate||0}" min="0" max="100" step="0.1" onchange="saveEmpWage('${e.id}')" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:14px;box-sizing:border-box;"></div>
         </div>
-        <div style="font-size:10px;color:#aaa;line-height:1.5;margin-top:4px;">手取り目安 ＝ 額面 − 固定控除額（社保）− 額面×控除率（雇用保険0.6%等）</div>${targetLine}
+        <div style="font-size:10px;color:#aaa;line-height:1.5;margin-top:4px;">額面 ＝ 時給分 ＋ 固定手当／手取り目安 ＝ 額面 − 固定控除額（社保）− 額面×控除率（雇用保険等）。控除率の具体的な数値・手当の非課税限度額などは顧問社労士・税理士にご確認ください。</div>${targetLine}
       </div>` : '';
     return `
     <div style="border:1px solid #eee;border-radius:10px;padding:14px;margin-bottom:10px;">
@@ -1029,15 +1034,16 @@ async function saveEmpWage(empId) {
   const wl = document.getElementById('wl_' + empId).value;
   const wr = document.getElementById('wr_' + empId).value;
   const wf = document.getElementById('wf_' + empId).value;
+  const wa = document.getElementById('wa_' + empId).value;
   const d = await api({ type: 'save_employee_settings', employeeId: empId, empType: et,
     wageWeekday: Number(wj)||0, wageSat: Number(wk)||0, wageSunHol: Number(wl)||0,
-    deductRate: Number(wr)||0, fixedDeduct: Number(wf)||0 });
+    deductRate: Number(wr)||0, fixedDeduct: Number(wf)||0, fixedAllowance: Number(wa)||0 });
   const msg = document.getElementById('empSetMsg');
   msg.className = 'msg ' + (d.success ? 'success' : 'error');
   msg.textContent = d.success ? '✅ ' + (empSetData.find(e=>e.id===empId)||{}).name + ' の時給・控除設定を保存しました' : 'エラー：' + d.message;
   msg.style.display = 'block';
   if (d.success) { const t = empSetData.find(e=>e.id===empId);
-    if (t) { t.wageWeekday=Number(wj)||0; t.wageSat=Number(wk)||0; t.wageSunHol=Number(wl)||0; t.deductRate=Number(wr)||0; t.fixedDeduct=Number(wf)||0; } }
+    if (t) { t.wageWeekday=Number(wj)||0; t.wageSat=Number(wk)||0; t.wageSunHol=Number(wl)||0; t.deductRate=Number(wr)||0; t.fixedDeduct=Number(wf)||0; t.fixedAllowance=Number(wa)||0; } }
 }
 
 // ============================================================

@@ -644,7 +644,7 @@ async function loadMyPay() {
         </div>
         ${netHtml}
         ${goalHtml}
-        <div class="pc-sub">勤務 ${p.totalHours}h ・ 出勤${p.workedDays}日<br><b style="color:#E65100;">※金額はすべて“あくまで目安”です。</b>見込は予定通り出た場合の概算、手取りも概算のため、実際の支給額とは異なる場合があります。</div>
+        <div class="pc-sub">勤務 ${p.totalHours}h ・ 出勤${p.workedDays}日${p.fixedAllowance ? '<br>時給分 ' + yen(p.hourlyPay) + ' ＋ 固定手当 ' + yen(p.fixedAllowance) + ' ＝ 額面 ' + yen(p.currentPay) : ''}<br><b style="color:#E65100;">※金額はすべて“あくまで目安”です。</b>見込は予定通り出た場合の概算、手取りも概算のため、実際の支給額とは異なる場合があります。</div>
       </div>`;
   } catch (e) {
     box.innerHTML = ''; // 給与カードは失敗しても本体に影響させない
