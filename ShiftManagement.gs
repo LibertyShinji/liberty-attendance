@@ -505,7 +505,8 @@ function getMyShift(userId, year, month) {
     const item = { d: d, start: r[3] || '', end: r[4] || '' };
     if ((r[5] || '確定') === '希望') kibou.push(item); else confirmed.push(item);
   });
-  return { success: true, name: emp.name, year, month, kibou, confirmed };
+  const daysInMonth = new Date(year, month, 0).getDate();
+  return { success: true, name: emp.name, year, month, daysInMonth, kibou, confirmed };
 }
 
 // 社員：出勤希望（シフト）を申告。entries=[{d,start,end}]（明日以降のみ）。
