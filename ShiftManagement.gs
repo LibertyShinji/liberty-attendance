@@ -482,7 +482,38 @@ function getOrCreateShiftSheet() {
     sheet.appendRow(['社員ID', '日付', '氏名', '開始時刻', '終了時刻', 'ステータス', '登録日時']);
     sheet.getRange(1, 1, 1, 7).setBackground('#37474F').setFontColor('#ffffff').setFontWeight('bold');
   }
+  // D・E列（開始/終了時刻）はプレーンテキスト固定にする。
+  // これが無いと、Googleスプレッドシートが "10:00" のような文字列を自動的に「時刻」型に
+  // 変換してしまい、後で読み込むと 1899-12-30T... のような壊れた値になる（2026-08判明の不具合）。
+  sheet.getRange(1, 4, Math.max(sheet.getMaxRows(), 1000), 2).setNumberFormat('@');
+  fixCorruptedShiftTimeCells_(sheet);
   return sheet;
+}
+
+// 既存行のD/E列がスプレッドシート側で日時型に化けてしまっている場合、HH:mmの文字列に戻す（自己修復）。
+function fixCorruptedShiftTimeCells_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  const range = sheet.getRange(2, 4, lastRow - 1, 2);
+  const values = range.getValues();
+  let changed = false;
+  const fixed = values.map(row => row.map(v => {
+    if (v instanceof Date) { changed = true; return normHHmm_(v); }
+    return v;
+  }));
+  if (changed) range.setValues(fixed);
+}
+
+// GASエディタから手動実行して、既存のシフト設定シートを即座に修復する（引数なし）。
+function debugFixShiftTimes() {
+  const sheet = getOrCreateShiftSheet(); // 呼ぶだけで書式修正＋自己修復が走る
+  return 'シフト設定シートの時刻データを修復しました（行数: ' + Math.max(0, sheet.getLastRow() - 1) + '）';
+}
+
+// D/E列から読んだ値をHH:mm文字列に正規化する（Date型で入っていても文字列でもOK）。
+function normHHmm_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Etc/UTC', 'HH:mm');
+  return String(v || '');
 }
 
 // HH:mm形式チェック（簡易）
@@ -502,7 +533,7 @@ function getMyShift(userId, year, month) {
     if (r[0] !== emp.id || !r[1]) return;
     const d = fmt(new Date(r[1]), 'yyyy/MM/dd');
     if (!d.startsWith(ym)) return;
-    const item = { d: d, start: r[3] || '', end: r[4] || '' };
+    const item = { d: d, start: normHHmm_(r[3]), end: normHHmm_(r[4]) };
     if ((r[5] || '確定') === '希望') kibou.push(item); else confirmed.push(item);
   });
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -572,7 +603,7 @@ function getShiftForAdmin(adminUserId, year, month) {
     if (!r[0] || !r[1]) return;
     const d = fmt(new Date(r[1]), 'yyyy/MM/dd');
     if (!d.startsWith(ym)) return;
-    const item = { d: d, start: r[3] || '', end: r[4] || '' };
+    const item = { d: d, start: normHHmm_(r[3]), end: normHHmm_(r[4]) };
     if ((r[5] || '確定') === '希望') (kibou[r[0]] = kibou[r[0]] || []).push(item);
     else (confirmed[r[0]] = confirmed[r[0]] || []).push(item);
   });
@@ -643,7 +674,7 @@ function getConfirmedShiftMapForMonth_(ss, ym) {
     if (!r[0] || !r[1] || (r[5] || '確定') !== '確定') return;
     const d = fmt(new Date(r[1]), 'yyyy/MM/dd');
     if (!d.startsWith(ym)) return;
-    (map[r[0]] = map[r[0]] || {})[d] = { start: r[3] || '', end: r[4] || '' };
+    (map[r[0]] = map[r[0]] || {})[d] = { start: normHHmm_(r[3]), end: normHHmm_(r[4]) };
   });
   return map;
 }
