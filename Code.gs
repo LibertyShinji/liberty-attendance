@@ -141,7 +141,7 @@ function handleLiffApi(body) {
     case 'request_shift_all':    return requestShiftFromAll(body.userId, body.year, body.month);
     // 社員設定（雇用形態・時給）・給与集計
     case 'get_employees_admin':  return getEmployeesAdmin(body.userId);
-    case 'save_employee_settings': return saveEmployeeSettings(body.userId, body.employeeId, body.empType, body.wageWeekday, body.wageSat, body.wageSunHol, body.deductRate, body.fixedDeduct, body.fixedAllowance);
+    case 'save_employee_settings': return saveEmployeeSettings(body.userId, body.employeeId, body.empType, body.wageWeekday, body.wageSat, body.wageSunHol, body.deductRate, body.fixedDeduct, body.fixedAllowance, body.targetHours);
     case 'get_employees_full':   return getEmployeesFull(body.userId);
     case 'add_employee':         return addEmployeeAdmin(body.userId, body.name, body.empType, body.hireDate, body.annualDays);
     case 'retire_employee':      return setEmployeeActive(body.userId, body.employeeId, false);
@@ -685,18 +685,21 @@ function getEmployeesAdmin(adminUserId) {
   return { success: true, employees };
 }
 
-// 既存スプレッドシートに「固定手当」列（P列）が無い場合に自動で見出しを追加する（2026-08追加分の後方互換対応）。
+// 既存スプレッドシートに「固定手当」列（P列）・「目標時間」列（Q列）が無い場合に自動で見出しを追加する（後方互換対応）。
 function ensureFixedAllowanceColumn_(sheet) {
   if (sheet.getLastColumn() < 16 || !sheet.getRange(1, 16).getValue()) {
     sheet.getRange(1, 16).setValue('固定手当').setBackground('#37474F').setFontColor('#ffffff').setFontWeight('bold');
   }
+  if (sheet.getLastColumn() < 17 || !sheet.getRange(1, 17).getValue()) {
+    sheet.getRange(1, 17).setValue('目標時間').setBackground('#37474F').setFontColor('#ffffff').setFontWeight('bold');
+  }
 }
 
-function saveEmployeeSettings(adminUserId, employeeId, empType, wageWeekday, wageSat, wageSunHol, deductRate, fixedDeduct, fixedAllowance) {
+function saveEmployeeSettings(adminUserId, employeeId, empType, wageWeekday, wageSat, wageSunHol, deductRate, fixedDeduct, fixedAllowance, targetHours) {
   const admin = getEmployeeByLineId(adminUserId);
   if (!admin || !admin.isAdmin) return { success: false, message: '管理者権限がありません' };
 
-  // 時給・控除率・固定控除額・固定手当は「値が渡された時だけ」更新する（未指定なら既存値を維持）。
+  // 時給・控除率・固定控除額・固定手当・目標時間は「値が渡された時だけ」更新する（未指定なら既存値を維持）。
   // ← 雇用形態だけ保存する操作で時給が0に上書きされる事故を防ぐ。
   const hasVal = v => v !== undefined && v !== null && v !== '' && !isNaN(Number(v));
 
@@ -712,6 +715,7 @@ function saveEmployeeSettings(adminUserId, employeeId, empType, wageWeekday, wag
       if (hasVal(deductRate))    sheet.getRange(i + 1, 13).setValue(Number(deductRate));    // M 控除率(%)
       if (hasVal(fixedDeduct))   sheet.getRange(i + 1, 15).setValue(Number(fixedDeduct));   // O 固定控除額(円)
       if (hasVal(fixedAllowance)) sheet.getRange(i + 1, 16).setValue(Number(fixedAllowance)); // P 固定手当(円)
+      if (hasVal(targetHours))   sheet.getRange(i + 1, 17).setValue(Number(targetHours));   // Q 目標時間(h)
       return { success: true };
     }
   }
@@ -745,6 +749,7 @@ function getEmployeesFull(adminUserId) {
     monthlyTarget: Number(r[13]) || 0,
     fixedDeduct: Number(r[14]) || 0,
     fixedAllowance: Number(r[15]) || 0,
+    targetHours: Number(r[16]) || 0,
     hasLineId: !!(r[5] && String(r[5]).trim()),
   }));
   return { success: true, employees };
@@ -860,7 +865,8 @@ function computePartPayroll_(year, month, filterId) {
       deductRate: Number(r[12]) || 0,      // M 控除率(%)：雇用保険など収入比例分
       monthlyTarget: Number(r[13]) || 0,   // N 月額目標(円)：本人が設定
       fixedDeduct: Number(r[14]) || 0,     // O 固定控除額(円)：社保など毎月固定分
-      fixedAllowance: Number(r[15]) || 0   // P 固定手当(円)：通勤手当など毎月固定で加算する分
+      fixedAllowance: Number(r[15]) || 0,  // P 固定手当(円)：通勤手当など毎月固定で加算する分
+      targetHours: Number(r[16]) || 0      // Q 目標時間(h)：月間の必要勤務時間（会社側の基準など）
     }));
   if (filterId) parts = parts.filter(p => p.id === filterId);
   if (!parts.length) return [];
@@ -907,6 +913,7 @@ function computePartPayroll_(year, month, filterId) {
     const todayStr = fmt(new Date(), 'yyyy/MM/dd');
     let plannedWorkDays = 0;
     let projectedHourly = hourlyPay; // 実績（打刻分）から積み上げる
+    let remainingPlannedHours = 0;   // 未打刻の残り確定シフト分の時間
     Object.keys(shiftDaysForP).forEach(d => {
       const lv = lmap[d], kk = kmap[d];
       if (lv === '全休' || kk === '全休') return; // 終日休みなら出勤予定に含めない
@@ -917,11 +924,17 @@ function computePartPayroll_(year, month, filterId) {
       const sMin = hhmmToMinutes_(s.start), eMin = hhmmToMinutes_(s.end);
       if (sMin == null || eMin == null || eMin <= sMin) return;
       const hours = (eMin - sMin) / 60 * weight;
+      remainingPlannedHours += hours;
       const dayType = getDayType(new Date(d.replace(/\//g, '-') + 'T00:00:00+09:00'));
       const rate = dayType === '土曜' ? p.wageSat : (dayType === '日祝' ? p.wageSunHol : p.wageWeekday);
       projectedHourly += yen(hours * rate);
     });
     projectedHourly = Math.max(hourlyPay, projectedHourly); // 下限＝現在の時給分実績
+    // 予定合計時間＝実績（打刻済み）＋残りの確定シフト時間。目標時間との比較に使う。
+    const plannedTotalHours = round(totalHours + remainingPlannedHours);
+    const targetHours = p.targetHours || 0;
+    const remainingHoursToTarget = targetHours > 0 ? round(Math.max(0, targetHours - plannedTotalHours)) : 0;
+    const targetHoursMet = targetHours > 0 && plannedTotalHours >= targetHours;
     const workedDays = Object.keys(a.days).length;
     const avgPerDay = workedDays > 0 ? hourlyPay / workedDays : 0; // 「目標まであと何日」の概算用
 
@@ -953,6 +966,8 @@ function computePartPayroll_(year, month, filterId) {
       hourlyPay: hourlyPay, currentPay: currentPay, projectedPay: projectedPay,
       netCurrentPay: netCurrentPay, netProjectedPay: netProjectedPay,
       workedDays: workedDays, plannedWorkDays: round(plannedWorkDays),
+      plannedTotalHours: plannedTotalHours, targetHours: targetHours,
+      remainingHoursToTarget: remainingHoursToTarget, targetHoursMet: targetHoursMet,
       monthlyTarget: target,
       remainingToGoal: remainingToGoal, daysToGoal: daysToGoal,
       goalAchieved: goalAchieved, goalWillAchieve: goalWillAchieve
@@ -2397,7 +2412,7 @@ function setupSpreadsheet() {
   initSheet(SHEETS.EMPLOYEES, [
     '社員ID', '氏名', 'PINコード', '入社日', '年間有給日数',
     'LINE UserID', '管理者', '有効',
-    '雇用形態', '平日時給', '土曜時給', '日祝時給', '控除率', '月額目標', '固定控除額', '固定手当'
+    '雇用形態', '平日時給', '土曜時給', '日祝時給', '控除率', '月額目標', '固定控除額', '固定手当', '目標時間'
   ]);
   initSheet(SHEETS.ATTENDANCE, [
     '日付', '社員ID', '氏名', '出勤時刻', '退勤時刻', '勤務時間（時間）',
