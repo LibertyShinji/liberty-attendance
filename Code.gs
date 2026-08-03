@@ -847,10 +847,8 @@ function bindMyLineId(userId, employeeId) {
 function computePartPayroll_(year, month, filterId) {
   const ss = SpreadsheetApp.openById(getConfig().SPREADSHEET_ID);
   const ym = year + '/' + String(month).padStart(2, '0');
-  const daysInMonth = new Date(year, month, 0).getDate();
   const round = x => Math.round(x * 100) / 100;
   const yen   = x => Math.round(x);
-  const wHalf = h => (h === '午前' || h === '午後') ? 0.5 : 1;
 
   // 対象＝有効なパート社員
   const empRows = ss.getSheetByName(SHEETS.EMPLOYEES).getDataRange().getValues();
@@ -901,21 +899,31 @@ function computePartPayroll_(year, month, filterId) {
     const hourlyPay = yen(a['平日'] * p.wageWeekday + a['土曜'] * p.wageSat + a['日祝'] * p.wageSunHol);
     const fixedAllowance = Math.max(0, p.fixedAllowance); // 通勤手当など・日数に関わらず毎月固定で加算
 
-    // 予定出勤日数（当月・公休/承認有給以外、半休0.5）
+    // 予定出勤日数＝当月の確定シフト日数（シフト制のため、公休モデルの「全日−休み」ではなく確定シフトを基準にする。2026-08修正）
+    // 全休の公休・有給と重なる日は出勤しない扱いで除外。半休と重なる日は0.5日扱い。
     const kmap = kou[p.id] || {};
     const lmap = collectApprovedLeaveDates(ss, p.id, ym); // date -> 全休/午前/午後
-    let offDays = 0;
-    Object.keys(kmap).forEach(d => { offDays += wHalf(kmap[d]); });
-    Object.keys(lmap).forEach(d => { if (!kmap[d]) offDays += wHalf(lmap[d]); });
-    const plannedWorkDays = Math.max(0, daysInMonth - offDays);
-
-    // 見込（時給分）＝出勤日平均 × 予定出勤日数（下限＝現在の時給分）
+    const shiftDaysForP = (getConfirmedShiftMapForMonth_(ss, ym)[p.id]) || {};
+    const todayStr = fmt(new Date(), 'yyyy/MM/dd');
+    let plannedWorkDays = 0;
+    let projectedHourly = hourlyPay; // 実績（打刻分）から積み上げる
+    Object.keys(shiftDaysForP).forEach(d => {
+      const lv = lmap[d], kk = kmap[d];
+      if (lv === '全休' || kk === '全休') return; // 終日休みなら出勤予定に含めない
+      const weight = (lv || kk) ? 0.5 : 1; // 半休と重なる日は0.5日扱い
+      plannedWorkDays += weight;
+      if (d <= todayStr) return; // 当日・過去日はすでに打刻実績（hourlyPay）側でカウント済み
+      const s = shiftDaysForP[d];
+      const sMin = hhmmToMinutes_(s.start), eMin = hhmmToMinutes_(s.end);
+      if (sMin == null || eMin == null || eMin <= sMin) return;
+      const hours = (eMin - sMin) / 60 * weight;
+      const dayType = getDayType(new Date(d.replace(/\//g, '-') + 'T00:00:00+09:00'));
+      const rate = dayType === '土曜' ? p.wageSat : (dayType === '日祝' ? p.wageSunHol : p.wageWeekday);
+      projectedHourly += yen(hours * rate);
+    });
+    projectedHourly = Math.max(hourlyPay, projectedHourly); // 下限＝現在の時給分実績
     const workedDays = Object.keys(a.days).length;
-    const avgPerDay = workedDays > 0 ? hourlyPay / workedDays : 0;
-    let projectedHourly = hourlyPay;
-    if (workedDays > 0) {
-      projectedHourly = Math.max(hourlyPay, yen(avgPerDay * plannedWorkDays));
-    }
+    const avgPerDay = workedDays > 0 ? hourlyPay / workedDays : 0; // 「目標まであと何日」の概算用
 
     // 額面＝時給分＋固定手当（固定手当は日数に関わらず毎月満額）
     const currentPay   = hourlyPay + fixedAllowance;
